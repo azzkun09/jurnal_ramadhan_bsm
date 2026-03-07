@@ -1140,41 +1140,75 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
 
 function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
   const { showToast } = dialogHelpers;
+  const [filterKelas, setFilterKelas] = useState('');
+  const [filterJurusan, setFilterJurusan] = useState('');
+  const [searchName, setSearchName] = useState('');
+  
   const unapproved = db.attendances.filter(a => !a.approved);
 
-  const handleApprove = (index) => {
+  const filteredUnapproved = unapproved.filter(att => {
+    const s = allStudents.find(stu => stu.id === att.studentId);
+    if (!s) return false;
+    const matchKelas = filterKelas ? s.kelas === filterKelas : true;
+    const matchJurusan = filterJurusan ? s.jurusan === filterJurusan : true;
+    const matchName = searchName ? s.name.toLowerCase().includes(searchName.toLowerCase()) : true;
+    return matchKelas && matchJurusan && matchName;
+  });
+
+  const handleApprove = (attToApprove) => {
     const newAttendances = [...db.attendances];
-    const globalIndex = newAttendances.findIndex(a => a === unapproved[index]);
-    newAttendances[globalIndex] = { ...newAttendances[globalIndex], approved: true };
-    updateDb({ ...db, attendances: newAttendances });
-    showToast('Kehadiran siswa berhasil disetujui', 'success');
+    const globalIndex = newAttendances.findIndex(a => a === attToApprove);
+    if(globalIndex > -1) {
+      newAttendances[globalIndex] = { ...newAttendances[globalIndex], approved: true };
+      updateDb({ ...db, attendances: newAttendances });
+      showToast('Kehadiran siswa berhasil disetujui', 'success');
+    }
   };
 
   const handleApproveAll = () => {
-    const newAttendances = db.attendances.map(a => ({ ...a, approved: true }));
+    const newAttendances = [...db.attendances];
+    filteredUnapproved.forEach(att => {
+       const idx = newAttendances.findIndex(a => a === att);
+       if(idx > -1) newAttendances[idx].approved = true;
+    });
     updateDb({ ...db, attendances: newAttendances });
-    showToast('Semua antrean kehadiran berhasil disetujui!', 'success');
+    showToast('Kehadiran yang difilter berhasil disetujui!', 'success');
   };
 
   return (
     <GlassCard className="p-6 rounded-3xl animate-fade-in-up">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-slate-800">Persetujuan Kehadiran</h2>
-        {unapproved.length > 0 && <button onClick={handleApproveAll} className="bg-teal-500 hover:bg-teal-600 text-white px-5 py-2 rounded-xl font-bold text-sm shadow-md">Approve Semua</button>}
+      <div className="flex flex-col xl:flex-row justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Persetujuan Kehadiran</h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <input type="text" placeholder="Cari nama..." value={searchName} onChange={e=>setSearchName(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 w-full sm:w-auto" />
+          <select value={filterKelas} onChange={e=>setFilterKelas(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400">
+            <option value="">Semua Kelas</option>
+            {KELAS.map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+          <select value={filterJurusan} onChange={e=>setFilterJurusan(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400">
+            <option value="">Semua Jurusan</option>
+            {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
+          </select>
+          {filteredUnapproved.length > 0 && (
+            <button onClick={handleApproveAll} className="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-md transition-colors">Approve Ditampilkan</button>
+          )}
+        </div>
       </div>
       
-      {unapproved.length === 0 ? (
-        <div className="text-center text-slate-500 font-medium py-10">Tidak ada antrean persetujuan kehadiran.</div>
+      {filteredUnapproved.length === 0 ? (
+        <div className="text-center text-slate-500 font-medium py-10">Tidak ada antrean persetujuan kehadiran yang sesuai filter.</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr className="border-b border-slate-200 text-slate-600">
-                <th className="p-3 font-semibold">Tanggal</th><th className="p-3 font-semibold">Siswa</th><th className="p-3 font-semibold">Kelas</th><th className="p-3 font-semibold">Status</th><th className="p-3 font-semibold">Aksi</th>
+                <th className="p-3 font-semibold">Tanggal</th><th className="p-3 font-semibold">Siswa</th><th className="p-3 font-semibold">Kelas & Jurusan</th><th className="p-3 font-semibold">Status</th><th className="p-3 font-semibold">Aksi</th>
               </tr>
             </thead>
             <tbody>
-              {unapproved.map((att, i) => {
+              {filteredUnapproved.map((att, i) => {
                 const s = allStudents.find(stu => stu.id === att.studentId);
                 return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors text-slate-800">
@@ -1192,7 +1226,7 @@ function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${att.status==='hadir'?'bg-emerald-100 text-emerald-700':att.status==='sakit'?'bg-sky-100 text-sky-700':'bg-amber-100 text-amber-700'}`}>{att.status}</span>
                     </td>
                     <td className="p-3">
-                      <button onClick={() => handleApprove(i)} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow-sm">Approve</button>
+                      <button onClick={() => handleApprove(att)} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow-sm">Approve</button>
                     </td>
                   </tr>
                 )
@@ -1212,10 +1246,12 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
   const [pasteData, setPasteData] = useState('');
   const [modalData, setModalData] = useState(null);
   const [filterKelas, setFilterKelas] = useState('');
+  const [filterJurusan, setFilterJurusan] = useState('');
   const [search, setSearch] = useState('');
 
   const filtered = allStudents.filter(s => 
     (filterKelas ? s.kelas === filterKelas : true) &&
+    (filterJurusan ? s.jurusan === filterJurusan : true) &&
     (s.name.toLowerCase().includes(search.toLowerCase()) || s.username.toLowerCase().includes(search.toLowerCase()))
   );
 
@@ -1336,6 +1372,10 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
               <option value="">Semua Kelas</option>
               {KELAS.map(k => <option key={k} value={k}>{k}</option>)}
             </select>
+            <select value={filterJurusan} onChange={e=>setFilterJurusan(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400">
+              <option value="">Semua Jurusan</option>
+              {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
+            </select>
           </div>
           <div className="flex flex-wrap gap-2">
              <button onClick={downloadTemplate} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors border border-slate-300" title="Download Template CSV">
@@ -1375,6 +1415,9 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
                   </td>
                 </tr>
               ))}
+              {filtered.length === 0 && (
+                <tr><td colSpan="4" className="text-center p-6 text-slate-500">Tidak ada data siswa.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
