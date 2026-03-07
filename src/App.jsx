@@ -473,6 +473,7 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
 
   return (
     <div className="flex flex-col md:flex-row w-full h-full overflow-hidden">
+      {/* Sidebar Siswa */}
       <div className="w-full md:w-64 bg-white/60 backdrop-blur-md border-b md:border-r border-slate-200/50 flex flex-col shadow-sm shrink-0 z-20">
         <div className="p-4 md:p-6 border-b border-slate-200/50 flex justify-between items-center md:block">
           <div className="flex items-center gap-3">
@@ -517,12 +518,14 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
         </div>
       </div>
 
+      {/* Main Content Siswa */}
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-4xl mx-auto space-y-6">
           {activeTab === 'input' && <StudentInputTab user={user} db={db} todayDate={todayDate} myAttendance={myAttendance} myActivity={myActivity} dialogHelpers={dialogHelpers} />}
           {activeTab === 'progress' && <StudentProgressTab progressData={progressData} activities={db.activities.filter(a => a.studentId === user.id && !a.isDraft)} user={user} />}
           {activeTab === 'riwayat' && <StudentHistoryTab activities={db.activities.filter(a => a.studentId === user.id)} />}
           {activeTab === 'sertifikat' && <StudentCertificateTab user={user} settings={db.settings} progressData={progressData} />}
+
           <div className="text-center text-xs font-medium text-slate-400 pt-8 pb-4">
             &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
           </div>
@@ -531,6 +534,8 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
     </div>
   );
 }
+
+// --- Komponen Tab Siswa ---
 
 function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialogHelpers }) {
   const { showMessage, showConfirm, showToast } = dialogHelpers;
@@ -598,6 +603,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           return;
         }
       }
+
       setIsLocating(true);
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -692,6 +698,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
 
       <div className={`space-y-8 ${isFormLocked ? 'opacity-70 pointer-events-none' : ''}`}>
         
+        {/* Sholat & Tarawih */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
             <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Clock size={18} className="text-sky-500"/> Sholat Wajib 🕌</h3>
@@ -713,6 +720,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           </div>
         </div>
 
+        {/* Tadarus */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><BookOpen size={18} className="text-teal-500"/> Tadarus Al-Quran 📖</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -741,6 +749,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           </div>
         </div>
 
+        {/* Puasa */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4">Puasa Hari Ini? 🍽️</h3>
           <div className="flex gap-6 mb-4">
@@ -759,6 +768,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           )}
         </div>
 
+        {/* Bantu Orang Tua */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Heart size={18} className="text-pink-500"/> Membantu Orang Tua 💖</h3>
           <div className="flex gap-6 mb-4">
@@ -770,6 +780,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           )}
         </div>
 
+        {/* 7 Kebiasaan */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4">7 Kebiasaan Anak Indonesia Hebat 🌟</h3>
           <div className="space-y-4">
@@ -787,6 +798,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           </div>
         </div>
 
+        {/* Refleksi */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
            <h3 className="font-bold text-slate-800 mb-4">Apa yang Anda dapatkan hari ini? 💭</h3>
            <textarea value={formData.refleksi} onChange={e => setFormData({...formData, refleksi: e.target.value})} className="w-full bg-white rounded-xl p-4 border border-slate-200 min-h-[120px] focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-800 placeholder-slate-400" placeholder="Tuliskan pelajaran, hikmah, atau perasaan Anda hari ini..." />
@@ -837,13 +849,10 @@ function StudentProgressTab({ progressData, activities, user }) {
     { label: 'Bantu Orang Tua', icon: Heart, perc: getPerc(bantuTotal), color: 'bg-pink-500', iconColor: 'text-pink-500' },
   ];
 
-  const isManual = user.manualProgress !== undefined && user.manualProgress !== null && user.manualProgress !== '' && Number(user.manualProgress) > 0;
-
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <GlassCard className="p-8 flex items-center justify-center flex-col text-center rounded-3xl border-teal-100 relative">
-          {isManual && <span className="absolute top-4 right-4 bg-amber-100 text-amber-700 text-xs font-bold px-3 py-1 rounded-full border border-amber-200">Bonus: +{user.manualProgress}%</span>}
           <h3 className="text-xl font-bold text-slate-800 mb-6">Progress Ibadah Utama</h3>
           <CircularProgress percentage={progressData.averageProgress} size={180} strokeWidth={15} color="text-teal-500" />
           <p className="mt-4 text-slate-500 text-sm font-medium">
