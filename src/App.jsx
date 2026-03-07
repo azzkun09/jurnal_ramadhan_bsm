@@ -8,12 +8,11 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, collection, writeBatch, deleteDoc } from 'firebase/firestore';
 
 // ==========================================
-// 1. SIMULASI DATABASE & UTILS (Firebase Cloud)
+// 1. KONFIGURASI & UTILS
 // ==========================================
-// Harap gunakan konfigurasi Firebase Anda sendiri saat deploy ke production
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
@@ -30,17 +29,16 @@ const auth = getAuth(app);
 const firestoreDb = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'jurnal-ramadhan-aziz';
 
-// Helper untuk mendapatkan tanggal lokal (menghindari bug zona waktu UTC)
 const getLocalYYYYMMDD = () => {
   const d = new Date();
   const z = d.getTimezoneOffset() * 60000;
   return new Date(d - z).toISOString().split('T')[0];
 };
 
-const INITIAL_SETTINGS = {
+const DEFAULT_SETTINGS = {
   namaSekolah: 'SMK Bina Siswa Mandiri BL. Limbangan',
   tahunPelajaran: '2025/2026',
-  startDate: getLocalYYYYMMDD(), // Diubah agar defaultnya adalah hari ini (Hari ke-1)
+  startDate: getLocalYYYYMMDD(),
   endDate: '2026-04-07',
   minPercentage: 80,
   minActiveDays: 20,
@@ -52,22 +50,16 @@ const INITIAL_SETTINGS = {
   radius: 50
 };
 
-// Helper untuk menghitung jarak (Haversine Formula) dalam meter
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371e3; // Radius bumi dalam meter
+  const R = 6371e3;
   const rLat1 = lat1 * Math.PI/180;
   const rLat2 = lat2 * Math.PI/180;
   const dLat = (lat2-lat1) * Math.PI/180;
   const dLon = (lon2-lon1) * Math.PI/180;
-
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(rLat1) * Math.cos(rLat2) *
-            Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c; 
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon/2) * Math.sin(dLon/2);
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))); 
 };
 
-// Daftar 114 Surah Al-Quran
 const SURAH_LIST = [
   "Al-Fatihah", "Al-Baqarah", "Ali 'Imran", "An-Nisa'", "Al-Ma'idah", "Al-An'am", "Al-A'raf", "Al-Anfal", "At-Taubah", "Yunus", 
   "Hud", "Yusuf", "Ar-Ra'd", "Ibrahim", "Al-Hijr", "An-Nahl", "Al-Isra'", "Al-Kahf", "Maryam", "Taha", 
@@ -96,18 +88,8 @@ const KEBIASAAN_LIST = [
 const JURUSAN = ['TKJ', 'TKR', 'MP'];
 const KELAS = ['X-A', 'X-B', 'X-C', 'XI-A', 'XI-B', 'XI-C'];
 
-const INITIAL_DB = {
-  users: [
-    { id: 'admin', role: 'admin', username: 'admin', password: '123', name: 'Administrator' },
-    { id: 's1', role: 'siswa', username: 'siswa1', password: '123', name: 'Budi Santoso', kelas: 'X-A', jurusan: 'TKJ', certLink: '', allowDownload: false, ignoreTarget: false, manualProgress: '' }
-  ],
-  settings: INITIAL_SETTINGS,
-  attendances: [],
-  activities: []
-};
-
 // ==========================================
-// 2. COMPONENTS UTILS
+// 2. SHARED COMPONENTS
 // ==========================================
 const GlassCard = ({ children, className = '' }) => (
   <div className={`bg-white/70 backdrop-blur-md border border-white shadow-xl overflow-hidden ${className}`}>
@@ -117,44 +99,20 @@ const GlassCard = ({ children, className = '' }) => (
 
 const DarkModeStyles = () => (
   <style>{`
-    /* Custom Animations */
-    @keyframes fadeInUp {
-      from { opacity: 0; transform: translateY(15px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .animate-fade-in-up {
-      animation: fadeInUp 0.4s ease-out forwards;
-    }
-    .animate-delay-100 { animation-delay: 100ms; }
-    .animate-delay-200 { animation-delay: 200ms; }
-
-    /* Dark Mode Styles */
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fade-in-up { animation: fadeInUp 0.4s ease-out forwards; }
     .dark-theme { color-scheme: dark; }
     .dark-theme .bg-white { background-color: #1e293b !important; }
-    .dark-theme .bg-white\\/60 { background-color: rgba(30, 41, 59, 0.6) !important; }
-    .dark-theme .bg-white\\/70 { background-color: rgba(30, 41, 59, 0.7) !important; }
-    .dark-theme .bg-white\\/80 { background-color: rgba(30, 41, 59, 0.8) !important; }
+    .dark-theme .bg-white\\/60, .dark-theme .bg-white\\/70, .dark-theme .bg-white\\/80 { background-color: rgba(30, 41, 59, 0.8) !important; }
     .dark-theme .text-slate-800 { color: #f8fafc !important; }
     .dark-theme .text-slate-700 { color: #f1f5f9 !important; }
     .dark-theme .text-slate-600 { color: #cbd5e1 !important; }
     .dark-theme .text-slate-500 { color: #94a3b8 !important; }
-    .dark-theme .border-slate-200, .dark-theme .border-slate-100 { border-color: #334155 !important; }
-    .dark-theme .border-white { border-color: #475569 !important; }
+    .dark-theme .border-slate-200, .dark-theme .border-slate-100, .dark-theme .border-white { border-color: #334155 !important; }
     .dark-theme .bg-slate-50 { background-color: #0f172a !important; }
     .dark-theme .bg-slate-100 { background-color: #1e293b !important; }
+    .dark-theme input, .dark-theme select, .dark-theme textarea { background-color: #0f172a !important; color: #f8fafc !important; border-color: #334155 !important; }
     .dark-theme .bg-teal-50 { background-color: rgba(20, 184, 166, 0.1) !important; }
-    .dark-theme .bg-sky-50 { background-color: rgba(14, 165, 233, 0.1) !important; }
-    .dark-theme .bg-rose-50 { background-color: rgba(244, 63, 94, 0.1) !important; }
-    .dark-theme .bg-emerald-100 { background-color: rgba(16, 185, 129, 0.2) !important; }
-    .dark-theme .bg-amber-100 { background-color: rgba(245, 158, 11, 0.2) !important; }
-    .dark-theme input, .dark-theme select, .dark-theme textarea {
-      background-color: #0f172a !important;
-      color: #f8fafc !important;
-      border-color: #334155 !important;
-    }
-    .dark-theme input::placeholder, .dark-theme textarea::placeholder {
-      color: #64748b !important;
-    }
   `}</style>
 );
 
@@ -179,11 +137,9 @@ const CircularProgress = ({ percentage, color = 'text-teal-500', size = 120, str
   );
 };
 
-// Custom Global Dialog (menggantikan alert & confirm bawaan browser)
 function GlobalDialog({ dialog, onClose }) {
   const [inputValue, setInputValue] = useState('');
 
-  // Reset input when dialog opens
   useEffect(() => {
     if (dialog) setInputValue('');
   }, [dialog]);
@@ -198,7 +154,7 @@ function GlobalDialog({ dialog, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[999] p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col transform transition-all border border-slate-200 animate-fade-in-up">
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col border border-slate-200 animate-fade-in-up">
         <div className="flex items-center gap-3 mb-4">
            {dialog.type === 'alert' ? <AlertCircle className="text-teal-500 w-8 h-8"/> : <AlertCircle className="text-amber-500 w-8 h-8"/>}
            <h3 className="text-xl font-bold text-slate-800">{dialog.type === 'alert' ? 'Informasi' : 'Perhatian'}</h3>
@@ -207,16 +163,16 @@ function GlobalDialog({ dialog, onClose }) {
         
         {dialog.type === 'prompt' && (
           <div className="mb-6">
-             <label className="text-xs font-bold text-slate-500 mb-2 block uppercase tracking-wider">Ketik "{dialog.expectedText}" di bawah ini</label>
+             <label className="text-xs font-bold text-slate-500 mb-2 block uppercase">Ketik "{dialog.expectedText}" di bawah ini</label>
              <input type="text" value={inputValue} onChange={e=>setInputValue(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-teal-500 outline-none text-slate-800 font-bold" placeholder={dialog.expectedText} />
           </div>
         )}
 
-        <div className="flex justify-end gap-3 mt-auto pt-4 border-t border-slate-100">
+        <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
           {dialog.type !== 'alert' && (
-            <button onClick={onClose} className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition-colors">Batal</button>
+            <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold">Batal</button>
           )}
-          <button onClick={handleConfirm} disabled={dialog.type === 'prompt' && inputValue !== dialog.expectedText} className="px-6 py-2.5 rounded-xl bg-teal-500 text-white hover:bg-teal-600 font-bold transition-colors shadow-lg shadow-teal-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+          <button type="button" onClick={handleConfirm} disabled={dialog.type === 'prompt' && inputValue !== dialog.expectedText} className="px-6 py-2.5 rounded-xl bg-teal-500 text-white hover:bg-teal-600 font-bold shadow-lg disabled:opacity-50 flex items-center gap-2">
             {dialog.type === 'alert' ? 'Tutup' : <><CheckSquare size={18}/> Konfirmasi</>}
           </button>
         </div>
@@ -225,17 +181,16 @@ function GlobalDialog({ dialog, onClose }) {
   );
 }
 
-// Komponen Notifikasi Toast Mengambang
 function ToastContainer({ toasts, removeToast }) {
   return (
     <div className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-3 pointer-events-none">
       {toasts.map(t => (
-        <div key={t.id} className={`pointer-events-auto flex items-center justify-between p-4 rounded-2xl shadow-xl min-w-[280px] transition-all transform animate-fade-in-up ${t.type === 'success' ? 'bg-teal-600 text-white' : t.type === 'error' ? 'bg-rose-500 text-white' : 'bg-slate-800 text-white'}`}>
+        <div key={t.id} className={`pointer-events-auto flex items-center justify-between p-4 rounded-2xl shadow-xl min-w-[280px] animate-fade-in-up ${t.type === 'success' ? 'bg-teal-600 text-white' : t.type === 'error' ? 'bg-rose-500 text-white' : 'bg-slate-800 text-white'}`}>
           <div className="flex items-center gap-3">
             {t.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
             <span className="font-bold text-sm tracking-wide">{t.message}</span>
           </div>
-          <button onClick={() => removeToast(t.id)} className="ml-4 opacity-70 hover:opacity-100 transition-opacity"><X size={18}/></button>
+          <button onClick={() => removeToast(t.id)} className="ml-4 opacity-70 hover:opacity-100"><X size={18}/></button>
         </div>
       ))}
     </div>
@@ -246,39 +201,38 @@ function ToastContainer({ toasts, removeToast }) {
 // 3. MAIN APPLICATION
 // ==========================================
 export default function App() {
-  const [db, setDb] = useState(null);
+  const [fbUser, setFbUser] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
+  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('ramadhanTheme') === 'dark');
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Database States (Separated / Granular)
+  const [users, setUsers] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [attendances, setAttendances] = useState([]);
+  const [activities, setActivities] = useState([]);
+  
   const [dialog, setDialog] = useState(null);
   const [toasts, setToasts] = useState([]);
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('ramadhanTheme');
-    return saved === 'dark';
-  });
-  const [firebaseUser, setFirebaseUser] = useState(null);
-  const [isDbLoading, setIsDbLoading] = useState(true);
 
   const toggleTheme = () => {
     const newMode = !isDarkMode;
     setIsDarkMode(newMode);
     localStorage.setItem('ramadhanTheme', newMode ? 'dark' : 'light');
   };
-  
-  // Custom Dialog & Toast Helpers
-  const showMessage = (msg) => setDialog({ type: 'alert', message: msg });
-  const showConfirm = (msg, onConfirm) => setDialog({ type: 'confirm', message: msg, onConfirm });
-  const showPrompt = (msg, expected, onConfirm) => setDialog({ type: 'prompt', message: msg, expectedText: expected, onConfirm });
-  
-  const showToast = (message, type = 'success') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 4000); // Hilang setelah 4 detik
+
+  const dialogHelpers = {
+    showMessage: (msg) => setDialog({ type: 'alert', message: msg }),
+    showConfirm: (msg, onConfirm) => setDialog({ type: 'confirm', message: msg, onConfirm }),
+    showPrompt: (msg, expected, onConfirm) => setDialog({ type: 'prompt', message: msg, expectedText: expected, onConfirm }),
+    showToast: (message, type = 'success') => {
+      const id = Date.now();
+      setToasts(p => [...p, { id, message, type }]);
+      setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4000);
+    }
   };
 
-  const dialogHelpers = { showMessage, showConfirm, showPrompt, showToast };
-
-  // REVISI: Menggabungkan 2 useEffect Auth menjadi 1 yang solid
+  // Auth Effect
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -287,70 +241,87 @@ export default function App() {
         } else {
           await signInAnonymously(auth);
         }
-      } catch (error) {
-        console.error('Auth error', error);
-      }
+      } catch (err) { console.error("Auth error", err); }
     };
     initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setFirebaseUser(u);
-    });
-    return () => unsubscribe();
+    return onAuthStateChanged(auth, setFbUser);
   }, []);
 
-  // Sinkronisasi Real-time Database dari Cloud
+  // Data Sync Effect (Granular Snapshots)
   useEffect(() => {
-    if (!firebaseUser) return;
+    if (!fbUser) return;
 
-    // Sesuai aturan Firestore path: collection(db, 'artifacts', appId, 'public', 'data', collectionName)
-    const docRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'ramadhan_data', 'main_db');
-    
-    const unsub = onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        setDb(snap.data());
-        setIsDbLoading(false);
-      } else {
-        // Inisialisasi DB pertama kali ke Cloud
-        setDoc(docRef, INITIAL_DB).catch(err => console.error("Init Error:", err));
-      }
-    }, (err) => {
-      console.error("Firestore Snapshot Error:", err);
-      // Agar UI tidak stuck jika error rules
-      setIsDbLoading(false); 
-      showToast('Gagal menghubungi database.', 'error');
-    });
+    const paths = {
+      settings: doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'settings', 'config'),
+      users: collection(firestoreDb, 'artifacts', appId, 'public', 'data', 'users'),
+      attendances: collection(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances'),
+      activities: collection(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities')
+    };
 
-    return () => unsub();
-  }, [firebaseUser]);
+    const unsubs = [
+      onSnapshot(paths.settings, (s) => {
+        if (s.exists()) {
+            setSettings(s.data());
+        } else {
+            setDoc(paths.settings, DEFAULT_SETTINGS).catch(err => console.error("Init Settings Error:", err));
+        }
+      }),
+      onSnapshot(paths.users, (s) => {
+        const uList = s.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (uList.length === 0) {
+           const adminRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', 'admin');
+           setDoc(adminRef, { id: 'admin', role: 'admin', username: 'admin', password: '123', name: 'Administrator' });
+        }
+        setUsers(uList);
+      }),
+      onSnapshot(paths.attendances, (s) => setAttendances(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(paths.activities, (s) => setActivities(s.docs.map(d => ({ id: d.id, ...d.data() }))))
+    ];
 
-  // Simpan Perubahan ke Cloud
-  const updateDb = (newDb) => {
-    if (!firebaseUser) return;
-    const docRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'ramadhan_data', 'main_db');
-    setDoc(docRef, newDb).catch(err => console.error("Save Error:", err));
+    setIsLoading(false);
+    return () => unsubs.forEach(u => u());
+  }, [fbUser]);
+
+  // Session Persistence Effect (Mencegah "Mental" saat refresh)
+  useEffect(() => {
+    const savedUserId = localStorage.getItem('ramadhan_session_user');
+    if (savedUserId && users.length > 0 && !currentUser) {
+       const foundUser = users.find(u => u.id === savedUserId);
+       if (foundUser) setCurrentUser(foundUser);
+    }
+  }, [users, currentUser]);
+
+  const handleLoginSuccess = (user) => {
+    localStorage.setItem('ramadhan_session_user', user.id);
+    setCurrentUser(user);
   };
 
-  if (isDbLoading) {
+  const handleLogout = () => {
+    localStorage.removeItem('ramadhan_session_user');
+    setCurrentUser(null);
+  };
+
+  if (isLoading || !settings) {
     return (
       <div className={isDarkMode ? 'dark-theme' : ''}>
         <DarkModeStyles />
         <div className={`min-h-screen flex items-center justify-center ${isDarkMode ? 'bg-slate-900 text-white' : 'bg-gradient-to-br from-teal-50 via-sky-100 to-white text-slate-800'}`}>
            <div className="flex flex-col items-center gap-4 animate-pulse">
              <Loader2 size={48} className="animate-spin text-teal-500" />
-             <h2 className="text-xl font-bold">Menghubungkan ke Cloud Database... ☁️</h2>
-             <p className="text-sm opacity-70">Mensinkronkan data secara real-time</p>
+             <h2 className="text-xl font-bold">Menghubungkan ke Database... ☁️</h2>
            </div>
         </div>
       </div>
     );
   }
 
+  const globalDb = { users, settings, attendances, activities };
+
   if (!currentUser) {
     return (
       <div className={isDarkMode ? 'dark-theme' : ''}>
         <DarkModeStyles />
-        <LoginScreen onLogin={setCurrentUser} db={db} isDarkMode={isDarkMode} toggleTheme={toggleTheme} dialogHelpers={dialogHelpers} />
+        <LoginScreen onLogin={handleLoginSuccess} db={globalDb} isDarkMode={isDarkMode} toggleTheme={toggleTheme} dialogHelpers={dialogHelpers} />
         <GlobalDialog dialog={dialog} onClose={() => setDialog(null)} />
         <ToastContainer toasts={toasts} removeToast={id => setToasts(prev => prev.filter(t => t.id !== id))} />
       </div>
@@ -361,22 +332,19 @@ export default function App() {
     <div className={isDarkMode ? 'dark-theme' : ''}>
       <DarkModeStyles />
       <div className={`min-h-screen font-sans selection:bg-teal-200 selection:text-teal-900 ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-gradient-to-br from-teal-50 via-sky-50 to-white text-slate-800'}`}>
-        {/* Dynamic Background Elements */}
         <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
           <div className={`absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full blur-[120px] ${isDarkMode ? 'bg-teal-900/30' : 'bg-teal-200/40'}`} />
           <div className={`absolute bottom-[10%] -right-[10%] w-[60%] h-[60%] rounded-full blur-[120px] ${isDarkMode ? 'bg-sky-900/30' : 'bg-sky-200/40'}`} />
         </div>
-
         <div className="relative z-10 flex h-screen">
           {currentUser.role === 'siswa' ? (
-            <StudentDashboard user={currentUser} db={db} updateDb={updateDb} onLogout={() => setCurrentUser(null)} isDarkMode={isDarkMode} toggleTheme={toggleTheme} dialogHelpers={dialogHelpers} />
+            <StudentDashboard user={currentUser} db={globalDb} onLogout={handleLogout} isDarkMode={isDarkMode} toggleTheme={toggleTheme} dialogHelpers={dialogHelpers} />
           ) : (
-            <AdminDashboard user={currentUser} db={db} updateDb={updateDb} onLogout={() => setCurrentUser(null)} isDarkMode={isDarkMode} toggleTheme={toggleTheme} dialogHelpers={dialogHelpers} />
+            <AdminDashboard user={currentUser} db={globalDb} onLogout={handleLogout} isDarkMode={isDarkMode} toggleTheme={toggleTheme} dialogHelpers={dialogHelpers} />
           )}
         </div>
-        
         <GlobalDialog dialog={dialog} onClose={() => setDialog(null)} />
-        <ToastContainer toasts={toasts} removeToast={id => setToasts(prev => prev.filter(t => t.id !== id))} />
+        <ToastContainer toasts={toasts} removeToast={id => setToasts(p => p.filter(t => t.id !== id))} />
       </div>
     </div>
   );
@@ -393,10 +361,6 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (!db || !db.users) {
-      setError('Database belum siap, coba lagi.');
-      return;
-    }
     const user = db.users.find(u => u.username === username && u.password === password);
     if (user) {
       showToast(`Selamat datang, ${user.name}! 👋`, 'success');
@@ -411,12 +375,11 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
       <GlassCard className="w-full max-w-md p-8 rounded-3xl animate-fade-in-up z-10">
         <div className="text-center mb-8">
           <div className="w-24 h-24 mx-auto bg-white rounded-full p-2 shadow-lg border-2 border-teal-100 mb-4 overflow-hidden flex items-center justify-center">
-            <img src={db?.settings?.logoUrl || INITIAL_SETTINGS.logoUrl} alt="Logo" className="max-w-full max-h-full object-contain rounded-full" onError={(e) => e.target.src = 'https://via.placeholder.com/80'} />
+            <img src={db.settings.logoUrl || DEFAULT_SETTINGS.logoUrl} alt="Logo" className="max-w-full max-h-full object-contain rounded-full" onError={(e) => e.target.src = 'https://via.placeholder.com/80'} />
           </div>
           <h1 className="text-3xl font-bold text-slate-800 mb-1">Jurnal Ramadhan</h1>
-          <h2 className="text-sm font-bold text-teal-600 mb-2 uppercase tracking-wide">{db?.settings?.namaSekolah || INITIAL_SETTINGS.namaSekolah}</h2>
-          <p className="text-xs font-bold text-slate-500 mb-3 bg-slate-100 inline-block px-3 py-1 rounded-full text-slate-700">Tahun Pelajaran: {db?.settings?.tahunPelajaran || '2025/2026'}</p>
-          <p className="text-slate-500 text-sm font-medium">Sistem Pencatatan Kegiatan Ramadhan Siswa</p>
+          <h2 className="text-sm font-bold text-teal-600 mb-2 uppercase tracking-wide">{db.settings.namaSekolah}</h2>
+          <p className="text-xs font-bold text-slate-500 mb-3 bg-slate-100 inline-block px-3 py-1 rounded-full text-slate-700">Tahun Pelajaran: {db.settings.tahunPelajaran}</p>
         </div>
         
         {error && <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl mb-4 text-sm text-center">{error}</div>}
@@ -424,23 +387,23 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1">Username</label>
-            <input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full bg-white/80 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-all" placeholder="Masukkan username" required />
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)} className="w-full bg-white/80 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all" placeholder="Masukkan username" required />
           </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-white/80 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-all" placeholder="••••••••" required />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-white/80 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all" placeholder="••••••••" required />
           </div>
-          <button type="submit" className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 text-white font-bold rounded-xl px-4 py-3 shadow-lg shadow-teal-500/30 transform transition hover:-translate-y-0.5">
+          <button type="submit" className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 text-white font-bold rounded-xl px-4 py-3 shadow-lg transform transition hover:-translate-y-0.5">
             Masuk
           </button>
         </form>
       </GlassCard>
       
-      <button onClick={toggleTheme} className="absolute top-6 right-6 p-3 rounded-full bg-white/50 backdrop-blur border border-slate-200 shadow-lg text-slate-800 hover:bg-white transition-all z-20">
+      <button type="button" onClick={toggleTheme} className="absolute top-6 right-6 p-3 rounded-full bg-white/50 backdrop-blur border border-slate-200 shadow-lg text-slate-800 z-20">
         {isDarkMode ? <Sun size={24} /> : <Moon size={24} />}
       </button>
       <div className="absolute bottom-6 text-center w-full text-xs font-medium text-slate-500 z-10">
-        &copy; {new Date().getFullYear()} {db?.settings?.namaSekolah || INITIAL_SETTINGS.namaSekolah}. All rights reserved.
+        &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
       </div>
     </div>
   );
@@ -449,16 +412,13 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
 // ==========================================
 // 5. STUDENT DASHBOARD
 // ==========================================
-function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme, dialogHelpers }) {
+function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogHelpers }) {
   const [activeTab, setActiveTab] = useState('input');
-  
-  // REVISI: Dapatkan tanggal lokal perangkat, bukan UTC
   const todayDate = getLocalYYYYMMDD();
 
   const myAttendance = db.attendances.find(a => a.studentId === user.id && a.date === todayDate);
   const myActivity = db.activities.find(a => a.studentId === user.id && a.date === todayDate);
 
-  // Perhitungan Progress Berdasarkan Hari Berjalan (Elapsed Days)
   const calculateProgress = () => {
     let totalScore = 0;
     let daysCount = 0;
@@ -469,51 +429,37 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
     const todayObj = new Date(todayDate + 'T00:00:00');
     const totalProgramDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
 
-    // Hitung jumlah hari yang sudah berjalan sejak program dimulai
     let elapsedDays = 1;
     if (todayObj < start) {
-       elapsedDays = 1; // Program belum mulai
+       elapsedDays = 1; 
     } else if (todayObj > end) {
-       elapsedDays = totalProgramDays; // Program sudah selesai, ambil total maksimal hari
+       elapsedDays = totalProgramDays; 
     } else {
-       elapsedDays = Math.max(1, Math.round((todayObj - start) / (1000 * 60 * 60 * 24)) + 1); // Hari berjalan
+       elapsedDays = Math.max(1, Math.round((todayObj - start) / (1000 * 60 * 60 * 24)) + 1);
     }
 
     const myActivities = db.activities.filter(a => a.studentId === user.id && !a.isDraft);
     
     myActivities.forEach(act => {
       daysCount++;
-      const data = act.data;
+      // PROTEKSI CRASH: Menggunakan fallback object (|| {}) agar tidak error saat baca data lama
+      const data = act.data || {};
       let dayScore = 0;
-
-      // Sholat (40%)
-      const sholatCount = Object.values(data.sholat).filter(Boolean).length;
-      dayScore += (sholatCount / 5) * weights.sholat;
-
-      // Tarawih (10%)
-      if (data.tarawih) dayScore += weights.tarawih;
-
-      // Tadarus (20%)
-      if (data.tadarus.startSurah) dayScore += weights.tadarus;
-
-      // Puasa (20%)
-      if (['ya', 'sakit', 'haid'].includes(data.puasa.status)) {
-        dayScore += weights.puasa;
-      }
-
-      // Bantu Ortu (10%)
-      if (data.bantuOrtu.status === 'ya') dayScore += weights.bantuOrtu;
-
+      
+      const sholatCount = Object.values(data.sholat || {}).filter(Boolean).length;
+      dayScore += (sholatCount / 5) * (weights.sholat || 40);
+      
+      if (data.tarawih) dayScore += (weights.tarawih || 10);
+      if (data.tadarus?.startSurah) dayScore += (weights.tadarus || 20);
+      if (['ya', 'sakit', 'haid'].includes(data.puasa?.status)) dayScore += (weights.puasa || 20);
+      if (data.bantuOrtu?.status === 'ya') dayScore += (weights.bantuOrtu || 10);
+      
       totalScore += dayScore;
     });
 
-    // Rata-rata dibagi HARI YANG SUDAH BERJALAN
     const calculatedAvg = totalScore / elapsedDays;
-    
-    // Bonus Admin HANYA ditambahkan pada total akhir utama
     const manualBonus = (user.manualProgress !== undefined && user.manualProgress !== null && user.manualProgress !== '') 
-      ? Number(user.manualProgress) 
-      : 0;
+      ? Number(user.manualProgress) : 0;
     
     return { 
       averageProgress: Math.min(100, calculatedAvg + manualBonus), 
@@ -527,7 +473,6 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
 
   return (
     <div className="flex flex-col md:flex-row w-full h-full overflow-hidden">
-      {/* Sidebar Siswa */}
       <div className="w-full md:w-64 bg-white/60 backdrop-blur-md border-b md:border-r border-slate-200/50 flex flex-col shadow-sm shrink-0 z-20">
         <div className="p-4 md:p-6 border-b border-slate-200/50 flex justify-between items-center md:block">
           <div className="flex items-center gap-3">
@@ -540,10 +485,10 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
             </div>
           </div>
           <div className="md:hidden flex gap-2">
-            <button onClick={toggleTheme} className="p-2 text-slate-600 hover:bg-slate-200 rounded-xl transition-all">
+            <button type="button" onClick={toggleTheme} className="p-2 text-slate-600 hover:bg-slate-200 rounded-xl transition-all">
               {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <button onClick={onLogout} className="p-2 text-red-500 hover:bg-red-100 rounded-xl transition-all">
+            <button type="button" onClick={onLogout} className="p-2 text-red-500 hover:bg-red-100 rounded-xl transition-all">
               <LogOut size={20} />
             </button>
           </div>
@@ -556,33 +501,30 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
             { id: 'riwayat', icon: BookOpen, label: 'Riwayat' },
             { id: 'sertifikat', icon: FileText, label: 'Sertifikat' },
           ].map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 md:w-full flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3 rounded-xl transition-all ${activeTab === tab.id ? 'bg-gradient-to-r from-teal-400 to-sky-500 text-white shadow-md shadow-teal-500/20' : 'text-slate-600 hover:bg-white/80 hover:text-teal-600'}`}>
+            <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 md:w-full flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3 rounded-xl transition-all ${activeTab === tab.id ? 'bg-gradient-to-r from-teal-400 to-sky-500 text-white shadow-md shadow-teal-500/20' : 'text-slate-600 hover:bg-white/80 hover:text-teal-600'}`}>
               <tab.icon size={18} className="md:w-5 md:h-5" /> <span className="font-semibold text-sm whitespace-nowrap">{tab.label}</span>
             </button>
           ))}
         </nav>
         
         <div className="hidden md:block p-4 border-t border-slate-200/50">
-          <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-slate-100 rounded-xl transition-all font-semibold mb-2">
+          <button type="button" onClick={toggleTheme} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-slate-100 rounded-xl transition-all font-semibold mb-2">
             {isDarkMode ? <><Sun size={20} /> <span>Mode Terang</span></> : <><Moon size={20} /> <span>Mode Gelap</span></>}
           </button>
-          <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all font-semibold">
+          <button type="button" onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all font-semibold">
             <LogOut size={20} /> <span>Keluar</span>
           </button>
         </div>
       </div>
 
-      {/* Main Content Siswa */}
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-4xl mx-auto space-y-6">
-          
-          {activeTab === 'input' && <StudentInputTab user={user} db={db} updateDb={updateDb} todayDate={todayDate} myAttendance={myAttendance} myActivity={myActivity} dialogHelpers={dialogHelpers} />}
+          {activeTab === 'input' && <StudentInputTab user={user} db={db} todayDate={todayDate} myAttendance={myAttendance} myActivity={myActivity} dialogHelpers={dialogHelpers} />}
           {activeTab === 'progress' && <StudentProgressTab progressData={progressData} activities={db.activities.filter(a => a.studentId === user.id && !a.isDraft)} user={user} />}
           {activeTab === 'riwayat' && <StudentHistoryTab activities={db.activities.filter(a => a.studentId === user.id)} />}
           {activeTab === 'sertifikat' && <StudentCertificateTab user={user} settings={db.settings} progressData={progressData} />}
-
           <div className="text-center text-xs font-medium text-slate-400 pt-8 pb-4">
-            &copy; {new Date().getFullYear()} {db?.settings?.namaSekolah || 'SMK Bina Siswa Mandiri'}. All rights reserved.
+            &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
           </div>
         </div>
       </div>
@@ -590,15 +532,12 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
   );
 }
 
-// --- Komponen Tab Siswa ---
-
-function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivity, dialogHelpers }) {
+function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialogHelpers }) {
   const { showMessage, showConfirm, showToast } = dialogHelpers;
   const [attendanceForm, setAttendanceForm] = useState('hadir');
   const [isLocating, setIsLocating] = useState(false);
 
-  // --- CEK PERIODE WAKTU JURNAL ---
-  const { startDate, endDate } = db.settings;
+  const { startDate, endDate, locationRestriction, centerLat, centerLng, radius } = db.settings;
   const isBeforeStart = todayDate < startDate;
   const isAfterEnd = todayDate > endDate;
 
@@ -622,7 +561,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
     );
   }
   
-  // Default Activity State
   const defaultActivity = {
     sholat: { subuh: false, dzuhur: false, ashar: false, maghrib: false, isya: false },
     tarawih: false,
@@ -636,22 +574,23 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
   const [formData, setFormData] = useState(myActivity ? myActivity.data : defaultActivity);
 
   const submitAttendance = (locationData = null) => {
-    const newAttendances = [...db.attendances];
-    newAttendances.push({
+    const id = `${user.id}_${todayDate}`;
+    const ref = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', id);
+    setDoc(ref, {
+      id: id,
       date: todayDate,
       studentId: user.id,
       status: attendanceForm,
-      approved: false, // Harus diapprove admin
+      approved: false,
       location: locationData
-    });
-    updateDb({ ...db, attendances: newAttendances });
-    showToast('Absensi berhasil dikirim! Menunggu persetujuan admin.', 'success');
+    }).then(() => showToast('Absensi berhasil dikirim! Menunggu persetujuan admin.', 'success'))
+      .catch((err) => showToast('Gagal mengirim absensi: ' + err.message, 'error'));
   };
 
   const handleAbsen = () => {
     if (attendanceForm === 'hadir') {
       if (!navigator.geolocation) {
-        if (db.settings.locationRestriction) {
+        if (locationRestriction) {
           showMessage('Browser Anda tidak mendukung GPS. Absensi ditolak karena pembatasan lokasi aktif.');
           return;
         } else {
@@ -659,7 +598,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
           return;
         }
       }
-
       setIsLocating(true);
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -667,12 +605,12 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
           const userLat = pos.coords.latitude;
           const userLng = pos.coords.longitude;
           
-          if (db.settings.locationRestriction) {
-            const distance = calculateDistance(userLat, userLng, db.settings.centerLat, db.settings.centerLng);
-            if (distance <= (db.settings.radius || 50)) {
+          if (locationRestriction) {
+            const distance = calculateDistance(userLat, userLng, centerLat, centerLng);
+            if (distance <= (radius || 50)) {
               submitAttendance({ lat: userLat, lng: userLng, distance: Math.round(distance) });
             } else {
-              showMessage(`Absensi Gagal! ❌ Jarak Anda ${Math.round(distance)} meter dari area absensi (Batas maksimal: ${db.settings.radius}m). Silakan masuk ke area yang ditentukan.`);
+              showMessage(`Absensi Gagal! ❌ Jarak Anda ${Math.round(distance)} meter dari area absensi (Batas maksimal: ${radius}m). Silakan masuk ke area yang ditentukan.`);
             }
           } else {
             submitAttendance({ lat: userLat, lng: userLng });
@@ -680,7 +618,7 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
         },
         (err) => {
           setIsLocating(false);
-          if (db.settings.locationRestriction) {
+          if (locationRestriction) {
             showMessage('Gagal mendapatkan lokasi GPS. Pastikan Anda mengizinkan akses lokasi. Absensi ditolak karena pembatasan radius aktif.');
           } else {
             submitAttendance();
@@ -694,24 +632,17 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
   };
 
   const handleSaveActivity = (isDraft) => {
-    const newActivities = [...db.activities];
-    const existingIndex = newActivities.findIndex(a => a.studentId === user.id && a.date === todayDate);
-    
-    const payload = {
+    const id = `${user.id}_${todayDate}`;
+    const ref = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', id);
+    setDoc(ref, {
+      id: id,
       date: todayDate,
       studentId: user.id,
       isDraft: isDraft,
       timestamp: new Date().toISOString(),
       data: formData
-    };
-
-    if (existingIndex >= 0) {
-      newActivities[existingIndex] = payload;
-    } else {
-      newActivities.push(payload);
-    }
-    updateDb({ ...db, activities: newActivities });
-    showToast(isDraft ? "Draft berhasil disimpan! 📝" : "Kegiatan berhasil disimpan permanen 🔒", "success");
+    }).then(() => showToast(isDraft ? "Draft berhasil disimpan! 📝" : "Kegiatan berhasil disimpan permanen 🔒", "success"))
+      .catch((err) => showToast("Gagal menyimpan aktivitas: " + err.message, "error"));
   };
 
   const isFormLocked = myActivity && !myActivity.isDraft;
@@ -732,7 +663,7 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
              )
           })}
         </div>
-        <button onClick={handleAbsen} disabled={isLocating} className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 py-3 rounded-xl font-bold text-white shadow-lg shadow-teal-500/30 flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed transition-all">
+        <button type="button" onClick={handleAbsen} disabled={isLocating} className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 py-3 rounded-xl font-bold text-white shadow-lg shadow-teal-500/30 flex justify-center items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed transition-all">
           {isLocating ? <><Loader2 className="animate-spin" size={20} /> Mencari Lokasi...</> : 'Kirim Absensi 🚀'}
         </button>
       </GlassCard>
@@ -749,7 +680,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
     );
   }
 
-  // Activity Form UI
   return (
     <GlassCard className="p-8 relative rounded-3xl border-white animate-fade-in-up">
       <div className="flex justify-between items-center mb-8 pb-4 border-b border-slate-200">
@@ -762,7 +692,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
 
       <div className={`space-y-8 ${isFormLocked ? 'opacity-70 pointer-events-none' : ''}`}>
         
-        {/* Sholat & Tarawih */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
             <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Clock size={18} className="text-sky-500"/> Sholat Wajib 🕌</h3>
@@ -784,7 +713,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
           </div>
         </div>
 
-        {/* Tadarus */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><BookOpen size={18} className="text-teal-500"/> Tadarus Al-Quran 📖</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -813,7 +741,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
           </div>
         </div>
 
-        {/* Puasa */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4">Puasa Hari Ini? 🍽️</h3>
           <div className="flex gap-6 mb-4">
@@ -832,7 +759,6 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
           )}
         </div>
 
-        {/* Bantu Orang Tua */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Heart size={18} className="text-pink-500"/> Membantu Orang Tua 💖</h3>
           <div className="flex gap-6 mb-4">
@@ -844,25 +770,23 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
           )}
         </div>
 
-        {/* 7 Kebiasaan */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4">7 Kebiasaan Anak Indonesia Hebat 🌟</h3>
           <div className="space-y-4">
             {KEBIASAAN_LIST.map(k => (
               <div key={k.id} className="p-3 bg-white/40 rounded-xl border border-slate-200/50 hover:border-teal-200 transition-colors">
                 <label className="flex items-center gap-3 cursor-pointer mb-2 text-slate-700">
-                  <input type="checkbox" checked={formData.kebiasaan[k.id].checked} onChange={e => setFormData({...formData, kebiasaan: {...formData.kebiasaan, [k.id]: {checked: e.target.checked, desc: formData.kebiasaan[k.id].desc}}})} className="w-5 h-5 rounded border-slate-300 text-teal-500 focus:ring-teal-500" />
+                  <input type="checkbox" checked={formData.kebiasaan[k.id]?.checked || false} onChange={e => setFormData({...formData, kebiasaan: {...formData.kebiasaan, [k.id]: {checked: e.target.checked, desc: formData.kebiasaan[k.id]?.desc || ''}}})} className="w-5 h-5 rounded border-slate-300 text-teal-500 focus:ring-teal-500" />
                   <span className="font-semibold">{k.label}</span>
                 </label>
-                {formData.kebiasaan[k.id].checked && (
-                   <input type="text" placeholder={`Deskripsi ${k.label.toLowerCase()}...`} value={formData.kebiasaan[k.id].desc} onChange={e => setFormData({...formData, kebiasaan: {...formData.kebiasaan, [k.id]: {...formData.kebiasaan[k.id], desc: e.target.value}}})} className="w-full bg-white rounded-lg p-2.5 ml-8 border border-slate-200 max-w-lg text-sm text-slate-800 focus:ring-2 focus:ring-teal-400 focus:outline-none" />
+                {formData.kebiasaan[k.id]?.checked && (
+                   <input type="text" placeholder={`Deskripsi ${k.label.toLowerCase()}...`} value={formData.kebiasaan[k.id]?.desc || ''} onChange={e => setFormData({...formData, kebiasaan: {...formData.kebiasaan, [k.id]: {...formData.kebiasaan[k.id], desc: e.target.value}}})} className="w-full bg-white rounded-lg p-2.5 ml-8 border border-slate-200 max-w-lg text-sm text-slate-800 focus:ring-2 focus:ring-teal-400 focus:outline-none" />
                 )}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Refleksi */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
            <h3 className="font-bold text-slate-800 mb-4">Apa yang Anda dapatkan hari ini? 💭</h3>
            <textarea value={formData.refleksi} onChange={e => setFormData({...formData, refleksi: e.target.value})} className="w-full bg-white rounded-xl p-4 border border-slate-200 min-h-[120px] focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-800 placeholder-slate-400" placeholder="Tuliskan pelajaran, hikmah, atau perasaan Anda hari ini..." />
@@ -872,8 +796,8 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
 
       {!isFormLocked && (
         <div className="mt-8 flex gap-4 pt-6 border-t border-slate-200">
-          <button onClick={() => handleSaveActivity(true)} className="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm"><Save size={20}/> Save Draft 📝</button>
-          <button onClick={() => showConfirm('Simpan permanen? Data hari ini tidak bisa diubah lagi.', () => handleSaveActivity(false))} className="flex-1 bg-gradient-to-r from-teal-400 to-teal-500 hover:from-teal-500 hover:to-teal-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-teal-500/30 flex items-center justify-center gap-2 transition-all"><CheckSquare size={20}/> Save Permanen 🔒</button>
+          <button type="button" onClick={() => handleSaveActivity(true)} className="flex-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm"><Save size={20}/> Save Draft 📝</button>
+          <button type="button" onClick={() => showConfirm('Simpan permanen? Data hari ini tidak bisa diubah lagi.', () => handleSaveActivity(false))} className="flex-1 bg-gradient-to-r from-teal-400 to-teal-500 hover:from-teal-500 hover:to-teal-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-teal-500/30 flex items-center justify-center gap-2 transition-all"><CheckSquare size={20}/> Save Permanen 🔒</button>
         </div>
       )}
     </GlassCard>
@@ -881,32 +805,28 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
 }
 
 function StudentProgressTab({ progressData, activities, user }) {
-  // Hitung persentase kebiasaan terpisah & detail ibadah
   let kebiasaanScore = 0;
   let sholatTotal = 0, tarawihTotal = 0, tadarusTotal = 0, puasaTotal = 0, bantuTotal = 0;
   
-  // Menggunakan target HARI YANG TELAH BERJALAN sebagai pembagi untuk mengukur konsistensi
   const elapsedDays = progressData.elapsedDays;
 
   if (activities.length > 0) {
      let totalChecks = 0;
      activities.forEach(a => {
-        // Hitung Kebiasaan
-        Object.values(a.data.kebiasaan).forEach(k => { if(k.checked) totalChecks++ });
+        // PERLINDUNGAN CRASH: Gunakan fallback || {} 
+        const data = a.data || {};
+        Object.values(data.kebiasaan || {}).forEach(k => { if(k?.checked) totalChecks++ });
         
-        // Hitung Rincian Ibadah
-        const data = a.data;
-        const sholatCount = Object.values(data.sholat).filter(Boolean).length;
+        const sholatCount = Object.values(data.sholat || {}).filter(Boolean).length;
         sholatTotal += (sholatCount / 5);
         if (data.tarawih) tarawihTotal++;
-        if (data.tadarus.startSurah) tadarusTotal++;
-        if (['ya', 'sakit', 'haid'].includes(data.puasa.status)) puasaTotal++;
-        if (data.bantuOrtu.status === 'ya') bantuTotal++;
+        if (data.tadarus?.startSurah) tadarusTotal++;
+        if (['ya', 'sakit', 'haid'].includes(data.puasa?.status)) puasaTotal++;
+        if (data.bantuOrtu?.status === 'ya') bantuTotal++;
      });
      kebiasaanScore = (totalChecks / (elapsedDays * 7)) * 100;
   }
 
-  // Persentase rincian juga dibagi dengan hari yang sudah berjalan agar relevan jika bolong
   const getPerc = (val) => elapsedDays > 0 ? (val / elapsedDays) * 100 : 0;
 
   const details = [
@@ -938,7 +858,6 @@ function StudentProgressTab({ progressData, activities, user }) {
         </GlassCard>
       </div>
 
-      {/* Tambahan Rincian Progress Bar */}
       {activities.length > 0 && (
         <GlassCard className="p-8 rounded-3xl border border-slate-200">
           <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="text-teal-500"/> Rincian Keseluruhan Progress Ibadah</h3>
@@ -976,14 +895,14 @@ function StudentHistoryTab({ activities }) {
              </div>
              <div>
                <h4 className="font-bold text-lg text-slate-800 mb-1">Catatan Refleksi:</h4>
-               <p className="text-slate-600 text-sm italic">"{act.data.refleksi || 'Tidak ada catatan'}"</p>
+               <p className="text-slate-600 text-sm italic">"{act.data?.refleksi || 'Tidak ada catatan'}"</p>
              </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm font-medium text-slate-700">
-             <div><span className="text-slate-400 block text-xs uppercase mb-1">Puasa</span> {act.data.puasa.status}</div>
-             <div><span className="text-slate-400 block text-xs uppercase mb-1">Tarawih</span> {act.data.tarawih ? 'Ya' : 'Tidak'}</div>
-             <div><span className="text-slate-400 block text-xs uppercase mb-1">Bantu Ortu</span> {act.data.bantuOrtu.status}</div>
-             <div><span className="text-slate-400 block text-xs uppercase mb-1">Tadarus</span> {act.data.tadarus.startSurah ? `${act.data.tadarus.startSurah} - ${act.data.tadarus.endSurah}` : '-'}</div>
+             <div><span className="text-slate-400 block text-xs uppercase mb-1">Puasa</span> {act.data?.puasa?.status || '-'}</div>
+             <div><span className="text-slate-400 block text-xs uppercase mb-1">Tarawih</span> {act.data?.tarawih ? 'Ya' : 'Tidak'}</div>
+             <div><span className="text-slate-400 block text-xs uppercase mb-1">Bantu Ortu</span> {act.data?.bantuOrtu?.status || '-'}</div>
+             <div><span className="text-slate-400 block text-xs uppercase mb-1">Tadarus</span> {act.data?.tadarus?.startSurah ? `${act.data.tadarus.startSurah} - ${act.data.tadarus.endSurah}` : '-'}</div>
           </div>
         </GlassCard>
       ))}
@@ -1043,18 +962,14 @@ function StudentCertificateTab({ user, settings, progressData }) {
 // ==========================================
 // 6. ADMIN DASHBOARD
 // ==========================================
-function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme, dialogHelpers }) {
+function AdminDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogHelpers }) {
   const [activeTab, setActiveTab] = useState('dashboard');
-  
-  // Perhitungan Data Global Admin
   const allStudents = db.users.filter(u => u.role === 'siswa');
   const todayDate = getLocalYYYYMMDD();
   const activeToday = db.attendances.filter(a => a.date === todayDate && a.status === 'hadir').length;
   
-  // Helper re-used logic dengan penambahan Bonus Progress
   const getStudentProgress = (studentId) => {
     const student = allStudents.find(s => s.id === studentId);
-    
     let manualBonus = 0;
     if (student && student.manualProgress !== undefined && student.manualProgress !== null && student.manualProgress !== '') {
       manualBonus = Number(student.manualProgress);
@@ -1067,7 +982,6 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
     const end = new Date(endDate + 'T00:00:00');
     const todayObj = new Date(todayDate + 'T00:00:00');
 
-    // Hitung jumlah hari yang sudah berjalan sejak program dimulai
     let elapsedDays = 1;
     if (todayObj < start) {
        elapsedDays = 1; 
@@ -1080,14 +994,15 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
     const activities = db.activities.filter(a => a.studentId === studentId && !a.isDraft);
     
     activities.forEach(act => {
-      const data = act.data;
+      // PROTEKSI CRASH UNTUK ADMIN
+      const data = act.data || {};
       let dayScore = 0;
-      const sholatCount = Object.values(data.sholat).filter(Boolean).length;
-      dayScore += (sholatCount / 5) * weights.sholat;
-      if (data.tarawih) dayScore += weights.tarawih;
-      if (data.tadarus.startSurah) dayScore += weights.tadarus;
-      if (['ya', 'sakit', 'haid'].includes(data.puasa.status)) dayScore += weights.puasa;
-      if (data.bantuOrtu.status === 'ya') dayScore += weights.bantuOrtu;
+      const sholatCount = Object.values(data.sholat || {}).filter(Boolean).length;
+      dayScore += (sholatCount / 5) * (weights.sholat || 40);
+      if (data.tarawih) dayScore += (weights.tarawih || 10);
+      if (data.tadarus?.startSurah) dayScore += (weights.tadarus || 20);
+      if (['ya', 'sakit', 'haid'].includes(data.puasa?.status)) dayScore += (weights.puasa || 20);
+      if (data.bantuOrtu?.status === 'ya') dayScore += (weights.bantuOrtu || 10);
       totalScore += dayScore;
     });
     
@@ -1099,7 +1014,6 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
   const schoolAvg = studentsWithProgress.length ? studentsWithProgress.reduce((sum, s) => sum + s.progress, 0) / studentsWithProgress.length : 0;
   const passedTarget = studentsWithProgress.filter(s => s.progress >= db.settings.minPercentage).length;
 
-  // Kalkulasi untuk Chart (Rata-rata per kelas)
   const classStats = KELAS.map(k => {
     const studentsInClass = studentsWithProgress.filter(s => s.kelas === k);
     const avg = studentsInClass.length ? studentsInClass.reduce((sum, s) => sum + s.progress, 0) / studentsInClass.length : 0;
@@ -1116,10 +1030,10 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
             <h2 className="font-bold text-slate-800 md:text-lg text-sm">Admin Panel</h2>
           </div>
           <div className="md:hidden flex gap-2">
-            <button onClick={toggleTheme} className="p-2 text-slate-600 hover:bg-slate-200 rounded-xl transition-all">
+            <button type="button" onClick={toggleTheme} className="p-2 text-slate-600 hover:bg-slate-200 rounded-xl transition-all">
               {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <button onClick={onLogout} className="p-2 text-red-500 hover:bg-red-100 rounded-xl transition-all">
+            <button type="button" onClick={onLogout} className="p-2 text-red-500 hover:bg-red-100 rounded-xl transition-all">
               <LogOut size={20} />
             </button>
           </div>
@@ -1134,7 +1048,7 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
             { id: 'monitoring_detail', icon: Search, label: 'Monitoring Detail' },
             { id: 'pengaturan', icon: Settings, label: 'Pengaturan Sistem' },
           ].map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 md:w-full flex items-center justify-between px-3 md:px-4 py-2 md:py-3 rounded-xl transition-all ${activeTab === tab.id ? 'bg-teal-500 text-white shadow-md shadow-teal-500/20' : 'text-slate-600 hover:bg-teal-50 hover:text-teal-700 font-medium'}`}>
+            <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`flex-shrink-0 md:w-full flex items-center justify-between px-3 md:px-4 py-2 md:py-3 rounded-xl transition-all ${activeTab === tab.id ? 'bg-teal-500 text-white shadow-md shadow-teal-500/20' : 'text-slate-600 hover:bg-teal-50 hover:text-teal-700 font-medium'}`}>
               <div className="flex items-center gap-2 md:gap-3"><tab.icon size={18} className="md:w-5 md:h-5" /> <span className="text-sm whitespace-nowrap">{tab.label}</span></div>
               {tab.alert > 0 && <span className="ml-2 bg-rose-500 text-white text-xs font-bold px-2 py-0.5 md:py-1 rounded-full">{tab.alert}</span>}
             </button>
@@ -1142,10 +1056,10 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
         </nav>
         
         <div className="hidden md:block p-4 border-t border-slate-200">
-          <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-slate-100 rounded-xl transition-all font-semibold mb-2">
+          <button type="button" onClick={toggleTheme} className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-slate-100 rounded-xl transition-all font-semibold mb-2">
             {isDarkMode ? <><Sun size={20} /> <span>Mode Terang</span></> : <><Moon size={20} /> <span>Mode Gelap</span></>}
           </button>
-          <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all font-bold">
+          <button type="button" onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 text-red-500 hover:bg-red-50 rounded-xl transition-all font-bold">
             <LogOut size={20} /> <span className="font-medium">Keluar Admin</span>
           </button>
         </div>
@@ -1198,14 +1112,14 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
             </div>
           )}
 
-          {activeTab === 'approval' && <AdminApprovalTab db={db} updateDb={updateDb} allStudents={allStudents} dialogHelpers={dialogHelpers} />}
-          {activeTab === 'siswa' && <AdminSiswaTab db={db} updateDb={updateDb} allStudents={allStudents} dialogHelpers={dialogHelpers} />}
+          {activeTab === 'approval' && <AdminApprovalTab db={db} allStudents={allStudents} dialogHelpers={dialogHelpers} />}
+          {activeTab === 'siswa' && <AdminSiswaTab db={db} allStudents={allStudents} dialogHelpers={dialogHelpers} />}
           {activeTab === 'monitoring' && <AdminMonitoringTab db={db} allStudents={allStudents} dialogHelpers={dialogHelpers} />}
           {activeTab === 'monitoring_detail' && <AdminMonitoringDetailTab db={db} allStudents={allStudents} dialogHelpers={dialogHelpers} />}
-          {activeTab === 'pengaturan' && <AdminSettingsTab db={db} updateDb={updateDb} dialogHelpers={dialogHelpers} user={user} />}
+          {activeTab === 'pengaturan' && <AdminSettingsTab db={db} user={user} dialogHelpers={dialogHelpers} />}
 
           <div className="text-center text-xs font-medium text-slate-400 pt-8 pb-4">
-            &copy; {new Date().getFullYear()} {db?.settings?.namaSekolah || 'SMK Bina Siswa Mandiri'}. All rights reserved.
+            &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
           </div>
         </div>
       </div>
@@ -1215,7 +1129,7 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
 
 // --- Komponen Tab Admin ---
 
-function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
+function AdminApprovalTab({ db, allStudents, dialogHelpers }) {
   const { showToast } = dialogHelpers;
   const [filterKelas, setFilterKelas] = useState('');
   const [filterJurusan, setFilterJurusan] = useState('');
@@ -1233,22 +1147,19 @@ function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
   });
 
   const handleApprove = (attToApprove) => {
-    const newAttendances = [...db.attendances];
-    const globalIndex = newAttendances.findIndex(a => a === attToApprove);
-    if(globalIndex > -1) {
-      newAttendances[globalIndex] = { ...newAttendances[globalIndex], approved: true };
-      updateDb({ ...db, attendances: newAttendances });
-      showToast('Kehadiran siswa berhasil disetujui', 'success');
-    }
+    const ref = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', attToApprove.id);
+    setDoc(ref, { ...attToApprove, approved: true }).then(() => {
+        showToast('Kehadiran siswa berhasil disetujui', 'success');
+    });
   };
 
-  const handleApproveAll = () => {
-    const newAttendances = [...db.attendances];
+  const handleApproveAll = async () => {
+    const batch = writeBatch(firestoreDb);
     filteredUnapproved.forEach(att => {
-       const idx = newAttendances.findIndex(a => a === att);
-       if(idx > -1) newAttendances[idx].approved = true;
+       const ref = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', att.id);
+       batch.update(ref, { approved: true });
     });
-    updateDb({ ...db, attendances: newAttendances });
+    await batch.commit();
     showToast('Kehadiran yang difilter berhasil disetujui!', 'success');
   };
 
@@ -1269,7 +1180,7 @@ function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
             {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
           </select>
           {filteredUnapproved.length > 0 && (
-            <button onClick={handleApproveAll} className="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-md transition-colors">Approve Ditampilkan</button>
+            <button type="button" onClick={handleApproveAll} className="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-md transition-colors">Approve Ditampilkan</button>
           )}
         </div>
       </div>
@@ -1303,7 +1214,7 @@ function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${att.status==='hadir'?'bg-emerald-100 text-emerald-700':att.status==='sakit'?'bg-sky-100 text-sky-700':'bg-amber-100 text-amber-700'}`}>{att.status}</span>
                     </td>
                     <td className="p-3">
-                      <button onClick={() => handleApprove(att)} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow-sm">Approve</button>
+                      <button type="button" onClick={() => handleApprove(att)} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold shadow-sm">Approve</button>
                     </td>
                   </tr>
                 )
@@ -1316,7 +1227,7 @@ function AdminApprovalTab({ db, updateDb, allStudents, dialogHelpers }) {
   );
 }
 
-function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
+function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
   const { showMessage, showConfirm, showToast } = dialogHelpers;
   const [showModal, setShowModal] = useState(false);
   const [showPasteModal, setShowPasteModal] = useState(false);
@@ -1334,53 +1245,47 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
 
   const handleSaveSiswa = (e) => {
     e.preventDefault();
-    
-    // Pastikan jika kosong, value manualProgress dihapus agar kembali ke otomatis
     let processedData = { ...modalData };
-    if (processedData.manualProgress === '') {
-      delete processedData.manualProgress;
-    }
+    if (processedData.manualProgress === '') delete processedData.manualProgress;
 
-    const newUsers = [...db.users];
-    if (processedData.id) { // Edit
-      const index = newUsers.findIndex(u => u.id === processedData.id);
-      newUsers[index] = { ...newUsers[index], ...processedData };
-      showToast('Data siswa berhasil diperbarui!', 'success');
-    } else { // Add
-      newUsers.push({ ...processedData, id: 's' + Date.now(), role: 'siswa', certLink: '', allowDownload: false, ignoreTarget: false });
-      showToast('Siswa baru berhasil ditambahkan!', 'success');
-    }
-    updateDb({ ...db, users: newUsers });
-    setShowModal(false);
+    const id = processedData.id || 's' + Date.now();
+    const ref = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', id);
+    
+    setDoc(ref, { ...processedData, role: 'siswa', id, certLink: processedData.certLink || '', allowDownload: processedData.allowDownload || false, ignoreTarget: processedData.ignoreTarget || false })
+      .then(() => {
+        showToast('Data siswa berhasil disimpan!', 'success');
+        setShowModal(false);
+      });
   };
 
-  const handleDelete = (id) => {
-    showConfirm('Yakin hapus siswa ini beserta seluruh data kegiatannya?', () => {
-      updateDb({
-        ...db,
-        users: db.users.filter(u => u.id !== id),
-        attendances: db.attendances.filter(a => a.studentId !== id),
-        activities: db.activities.filter(a => a.studentId !== id)
-      });
+  const handleDelete = async (id) => {
+    showConfirm('Yakin hapus siswa ini beserta seluruh data kegiatannya?', async () => {
+      const batch = writeBatch(firestoreDb);
+      batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', id));
+      
+      // Delete their attendances and activities
+      db.attendances.filter(a => a.studentId === id).forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id)));
+      db.activities.filter(a => a.studentId === id).forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id)));
+      
+      await batch.commit();
       showToast('Data siswa berhasil dihapus secara permanen.', 'success');
     });
   };
 
-  const processCSVData = (text) => {
+  const processCSVData = async (text) => {
     const lines = text.split('\n').filter(l => l.trim() !== '');
-    const newUsers = [...db.users];
+    const batch = writeBatch(firestoreDb);
     let addedCount = 0;
     
-    // Asumsi baris pertama adalah header, kita mulai dari index 1
-    // Format: name,kelas,jurusan,username,password,certLink,manualProgress
     for (let i = 1; i < lines.length; i++) {
-      // Handle pemisah koma (CSV standar) atau tab (copy-paste dari Excel)
       const separator = lines[i].includes('\t') ? '\t' : ',';
       const cols = lines[i].split(separator).map(col => col.trim());
       
       if(cols.length >= 5) {
-        newUsers.push({
-          id: 's_csv' + Date.now() + i, 
+        const newId = 's_csv' + Date.now() + i;
+        const ref = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', newId);
+        batch.set(ref, {
+          id: newId, 
           role: 'siswa', 
           name: cols[0], 
           kelas: cols[1] || KELAS[0], 
@@ -1397,7 +1302,7 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
     }
     
     if (addedCount > 0) {
-      updateDb({ ...db, users: newUsers });
+      await batch.commit();
       showToast(`Berhasil mengimpor ${addedCount} data siswa!`, 'success');
       setShowPasteModal(false);
       setPasteData('');
@@ -1410,33 +1315,10 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (evt) => {
-        processCSVData(evt.target.result);
-      };
+      reader.onload = (evt) => processCSVData(evt.target.result);
       reader.readAsText(file);
     }
-    // Reset nilai input file agar bisa memilih file yang sama lagi
     e.target.value = null; 
-  };
-
-  const handlePasteSubmit = () => {
-    if (!pasteData.trim()) return;
-    processCSVData(pasteData);
-  };
-
-  const downloadTemplate = () => {
-    const header = "nama_lengkap,kelas,jurusan,username,password,link_sertifikat(opsional),override_progress(opsional)\n";
-    const sample1 = "Budi Santoso,X-A,TKJ,budi123,pass123,,\n";
-    const sample2 = "Siti Aminah,XI-B,MP,siti456,pass456,https://drive.google...,10\n";
-    
-    const dataStr = "data:text/csv;charset=utf-8," + encodeURIComponent(header + sample1 + sample2);
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", "template_siswa_ramadhan.csv");
-    document.body.appendChild(downloadAnchorNode); 
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-    showToast('Template CSV berhasil diunduh!', 'success');
   };
 
   return (
@@ -1455,16 +1337,24 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
             </select>
           </div>
           <div className="flex flex-wrap gap-2">
-             <button onClick={downloadTemplate} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors border border-slate-300" title="Download Template CSV">
+             <button type="button" onClick={() => {
+                const header = "nama_lengkap,kelas,jurusan,username,password,link_sertifikat(opsional),override_progress(opsional)\n";
+                const sample1 = "Budi Santoso,X-A,TKJ,budi123,pass123,,\n";
+                const dataStr = "data:text/csv;charset=utf-8," + encodeURIComponent(header + sample1);
+                const a = document.createElement('a');
+                a.setAttribute("href", dataStr);
+                a.setAttribute("download", "template_siswa_ramadhan.csv");
+                document.body.appendChild(a); a.click(); a.remove();
+             }} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors border border-slate-300" title="Download Template CSV">
                <Download size={14}/> Template
              </button>
-             <button onClick={() => setShowPasteModal(true)} className="bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors border border-amber-300" title="Paste data dari Excel/Sheets">
+             <button type="button" onClick={() => setShowPasteModal(true)} className="bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors border border-amber-300" title="Paste data dari Excel/Sheets">
                <FileText size={14}/> Paste Data
              </button>
              <label className="bg-sky-100 hover:bg-sky-200 text-sky-700 px-4 py-2 rounded-xl font-bold text-sm cursor-pointer flex items-center gap-2 transition-colors border border-sky-200">
                <UploadCloud size={16}/> Upload CSV <input type="file" accept=".csv" className="hidden" onChange={handleCSV}/>
              </label>
-             <button onClick={() => {setModalData({name:'', username:'', password:'', kelas: KELAS[0], jurusan: JURUSAN[0], manualProgress: ''}); setShowModal(true)}} className="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 shadow-md shadow-teal-500/20 transition-all">
+             <button type="button" onClick={() => {setModalData({name:'', username:'', password:'', kelas: KELAS[0], jurusan: JURUSAN[0], manualProgress: ''}); setShowModal(true)}} className="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-xl font-bold text-sm flex items-center gap-2 shadow-md shadow-teal-500/20 transition-all">
                + Tambah Manual
              </button>
           </div>
@@ -1487,8 +1377,8 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
                   <td className="p-3 text-xs text-slate-500 font-medium">U: {s.username}<br/>P: {s.password}</td>
                   <td className="p-3 font-medium text-slate-600">{s.kelas} - {s.jurusan}</td>
                   <td className="p-3 flex items-center justify-center gap-2">
-                     <button onClick={() => {setModalData({...s, manualProgress: s.manualProgress || ''}); setShowModal(true)}} className="p-2 bg-sky-100 text-sky-600 hover:bg-sky-200 rounded-lg transition-colors" title="Edit Data & Sertifikat"><Edit size={16}/></button>
-                     <button onClick={() => handleDelete(s.id)} className="p-2 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                     <button type="button" onClick={() => {setModalData({...s, manualProgress: s.manualProgress || ''}); setShowModal(true)}} className="p-2 bg-sky-100 text-sky-600 hover:bg-sky-200 rounded-lg transition-colors" title="Edit Data & Sertifikat"><Edit size={16}/></button>
+                     <button type="button" onClick={() => handleDelete(s.id)} className="p-2 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-lg transition-colors"><Trash2 size={16}/></button>
                   </td>
                 </tr>
               ))}
@@ -1500,13 +1390,13 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
         </div>
       </GlassCard>
 
-      {/* Modal Paste Data CSV/Excel */}
+      {/* Modal Paste Data */}
       {showPasteModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 overflow-y-auto">
           <GlassCard className="w-full max-w-2xl p-6 sm:p-8 rounded-3xl bg-white border-none shadow-2xl flex flex-col animate-fade-in-up">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl sm:text-2xl font-bold text-slate-800">Paste Data Siswa</h3>
-              <button onClick={() => setShowPasteModal(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
+              <button type="button" onClick={() => setShowPasteModal(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
             </div>
             <div className="bg-sky-50 border border-sky-200 p-4 rounded-xl mb-4 text-sm text-sky-800">
               <p className="font-bold mb-1">Cara penggunaan:</p>
@@ -1521,13 +1411,13 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
             <textarea 
               value={pasteData} 
               onChange={e => setPasteData(e.target.value)} 
-              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-4 min-h-[200px] text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none whitespace-pre"
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl p-4 min-h-[200px] text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none whitespace-pre text-slate-800"
               placeholder="Paste data di sini..."
             ></textarea>
             
             <div className="flex justify-end gap-3 pt-6 mt-4 border-t border-slate-100">
-              <button onClick={() => setShowPasteModal(false)} className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors">Batal</button>
-              <button onClick={handlePasteSubmit} className="px-6 py-2.5 bg-teal-500 hover:bg-teal-600 text-white rounded-xl font-bold shadow-md shadow-teal-500/20 transition-all flex items-center gap-2">
+              <button type="button" onClick={() => setShowPasteModal(false)} className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors">Batal</button>
+              <button type="button" onClick={() => { if(pasteData.trim()) processCSVData(pasteData); }} className="px-6 py-2.5 bg-teal-500 hover:bg-teal-600 text-white rounded-xl font-bold shadow-md shadow-teal-500/20 transition-all flex items-center gap-2">
                 <CheckSquare size={18}/> Proses Data
               </button>
             </div>
@@ -1590,7 +1480,6 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
   const [filterDate, setFilterDate] = useState('');
   const [searchName, setSearchName] = useState('');
 
-  // Kalkulasi ulang progress berdasarkan filter tanggal
   const getFilteredProgress = (studentId) => {
     const student = allStudents.find(s => s.id === studentId);
     let manualBonus = 0;
@@ -1608,19 +1497,18 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
     );
     
     activities.forEach(act => {
-      const data = act.data;
+      // PROTEKSI CRASH: gunakan ?. dan || {}
+      const data = act.data || {};
       let dayScore = 0;
-      const sholatCount = Object.values(data.sholat).filter(Boolean).length;
-      dayScore += (sholatCount / 5) * weights.sholat;
-      if (data.tarawih) dayScore += weights.tarawih;
-      if (data.tadarus.startSurah) dayScore += weights.tadarus;
-      if (['ya', 'sakit', 'haid'].includes(data.puasa.status)) dayScore += weights.puasa;
-      if (data.bantuOrtu.status === 'ya') dayScore += weights.bantuOrtu;
+      const sholatCount = Object.values(data.sholat || {}).filter(Boolean).length;
+      dayScore += (sholatCount / 5) * (weights.sholat || 40);
+      if (data.tarawih) dayScore += (weights.tarawih || 10);
+      if (data.tadarus?.startSurah) dayScore += (weights.tadarus || 20);
+      if (['ya', 'sakit', 'haid'].includes(data.puasa?.status)) dayScore += (weights.puasa || 20);
+      if (data.bantuOrtu?.status === 'ya') dayScore += (weights.bantuOrtu || 10);
       totalScore += dayScore;
     });
     
-    // Jika tidak di-filter per tanggal, pembaginya adalah HARI YANG SUDAH BERJALAN
-    // Jika difilter per tanggal tertentu, pembaginya adalah 1 (karena kita melihat laporan 1 hari itu)
     let targetDays = 1;
     if (!filterDate) {
         const todayDateStr = getLocalYYYYMMDD();
@@ -1638,15 +1526,10 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
     }
     
     const calculatedAvg = totalScore / targetDays;
-    
-    // Bonus Admin HANYA ditambahkan pada persentase total program, BUKAN pada pencarian filter tanggal
-    if (filterDate) {
-        return Math.min(100, calculatedAvg);
-    }
+    if (filterDate) return Math.min(100, calculatedAvg);
     return Math.min(100, calculatedAvg + manualBonus);
   };
 
-  // Terapkan filter kelas, jurusan, dan nama
   const processedStudents = allStudents
     .filter(s => filterKelas ? s.kelas === filterKelas : true)
     .filter(s => filterJurusan ? s.jurusan === filterJurusan : true)
@@ -1696,11 +1579,11 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
             {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
           </select>
           <div className="flex items-center gap-2">
-            <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 [color-scheme:light] dark:[color-scheme:dark]" />
-            {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-rose-500 hover:text-rose-700 font-bold">Clear Tanggal</button>}
+            <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400" />
+            {filterDate && <button type="button" onClick={() => setFilterDate('')} className="text-xs text-rose-500 hover:text-rose-700 font-bold">Clear</button>}
           </div>
         </div>
-        <button onClick={exportPDF} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm whitespace-nowrap"><Download size={16}/> Export PDF</button>
+        <button type="button" onClick={exportPDF} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm whitespace-nowrap"><Download size={16}/> Export PDF</button>
       </div>
       <div className="overflow-x-auto max-h-[500px]">
         <table className="w-full text-left text-sm">
@@ -1755,7 +1638,7 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
       <body><h2>Monitoring Detail Catatan Siswa ${filterDate ? `(${filterDate})` : ''}</h2>
       ${filteredActivities.map(act => {
         const s = allStudents.find(x => x.id === act.studentId);
-        return `<div class="card"><div class="meta"><b>${s?.name}</b> (${s?.kelas} ${s?.jurusan}) - <span style="color:#0f766e">${act.date}</span></div><p><b>Refleksi:</b> ${act.data.refleksi || '-'}</p><p><b>Bantu Ortu:</b> ${act.data.bantuOrtu.status === 'ya' ? act.data.bantuOrtu.desc : '-'}</p></div>`;
+        return `<div class="card"><div class="meta"><b>${s?.name}</b> (${s?.kelas} ${s?.jurusan}) - <span style="color:#0f766e">${act.date}</span></div><p><b>Refleksi:</b> ${act.data?.refleksi || '-'}</p><p><b>Bantu Ortu:</b> ${act.data?.bantuOrtu?.status === 'ya' ? act.data.bantuOrtu.desc : '-'}</p></div>`;
       }).join('')}
       <script>window.print(); window.close();</script></body></html>
     `);
@@ -1777,11 +1660,11 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
             {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
           </select>
           <div className="flex items-center gap-2">
-            <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 [color-scheme:light] dark:[color-scheme:dark]" />
-            {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-rose-500 hover:text-rose-700 font-bold">Clear</button>}
+            <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400" />
+            {filterDate && <button type="button" onClick={() => setFilterDate('')} className="text-xs text-rose-500 hover:text-rose-700 font-bold">Clear</button>}
           </div>
         </div>
-        <button onClick={exportDetailPDF} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm whitespace-nowrap"><Download size={16}/> Export PDF</button>
+        <button type="button" onClick={exportDetailPDF} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm whitespace-nowrap"><Download size={16}/> Export PDF</button>
       </div>
 
       <div className="space-y-4">
@@ -1794,12 +1677,12 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
                  <span className="text-xs font-bold text-teal-600 bg-teal-50 px-3 py-1 rounded-full">{act.date}</span>
                </div>
                <div className="text-sm space-y-2 mt-2">
-                 <div className="text-slate-700"><span className="text-sky-600 font-bold">Refleksi Harian:</span> <span className="italic bg-slate-50 px-2 py-1 rounded">"{act.data.refleksi || '-'}"</span></div>
-                 {act.data.bantuOrtu.status === 'ya' && <div className="text-slate-700"><span className="text-pink-500 font-bold">Bantu Ortu:</span> {act.data.bantuOrtu.desc}</div>}
+                 <div className="text-slate-700"><span className="text-sky-600 font-bold">Refleksi Harian:</span> <span className="italic bg-slate-50 px-2 py-1 rounded">"{act.data?.refleksi || '-'}"</span></div>
+                 {act.data?.bantuOrtu?.status === 'ya' && <div className="text-slate-700"><span className="text-pink-500 font-bold">Bantu Ortu:</span> {act.data.bantuOrtu.desc}</div>}
                  <div className="text-xs font-semibold text-slate-500 mt-3 flex gap-3 pt-2 border-t border-slate-100">
-                    <span>Puasa: <b className="text-slate-700">{act.data.puasa.status}</b></span>
-                    <span>Tarawih: <b className="text-slate-700">{act.data.tarawih?'Ya':'Tidak'}</b></span> 
-                    <span>Sholat: <b className="text-slate-700">{Object.values(act.data.sholat).filter(Boolean).length}/5</b></span>
+                    <span>Puasa: <b className="text-slate-700">{act.data?.puasa?.status || '-'}</b></span>
+                    <span>Tarawih: <b className="text-slate-700">{act.data?.tarawih?'Ya':'Tidak'}</b></span> 
+                    <span>Sholat: <b className="text-slate-700">{Object.values(act.data?.sholat || {}).filter(Boolean).length}/5</b></span>
                  </div>
                </div>
             </div>
@@ -1811,28 +1694,24 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
   );
 }
 
-function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
+function AdminSettingsTab({ db, user, dialogHelpers }) {
   const { showMessage, showPrompt, showToast, showConfirm } = dialogHelpers;
   const [sets, setSets] = useState(db.settings);
   const [adminCreds, setAdminCreds] = useState({ username: user.username, password: user.password });
 
-  const handleSave = () => {
-    const newDb = { ...db, settings: sets };
+  const handleSave = async () => {
+    const batch = writeBatch(firestoreDb);
     
-    // REVISI: Perbaikan cara mengubah array objek tanpa memutasi state secara langsung
-    const newUsers = [...newDb.users];
-    const adminIndex = newUsers.findIndex(u => u.id === user.id);
+    // Save Settings
+    batch.set(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'settings', 'config'), sets);
     
-    if (adminIndex > -1) {
-      newUsers[adminIndex] = { 
-        ...newUsers[adminIndex], 
-        username: adminCreds.username, 
-        password: adminCreds.password 
-      };
+    // Save Admin Credentials if changed
+    if (adminCreds.username !== user.username || adminCreds.password !== user.password) {
+      const adminRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', user.id);
+      batch.update(adminRef, { username: adminCreds.username, password: adminCreds.password });
     }
     
-    newDb.users = newUsers;
-    updateDb(newDb);
+    await batch.commit();
     showToast('Pengaturan sistem & profil admin berhasil disimpan!', 'success');
   };
 
@@ -1854,8 +1733,14 @@ function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
   };
 
   const handleReset = () => {
-    showPrompt('PERINGATAN! Ini akan menghapus SEMUA data Absensi dan Aktivitas Siswa. Ketik "RESET" untuk melanjutkan:', 'RESET', () => {
-      updateDb({ ...db, attendances: [], activities: [] });
+    showPrompt('PERINGATAN! Ini akan menghapus SEMUA data Absensi dan Aktivitas Siswa. Ketik "RESET" untuk melanjutkan:', 'RESET', async () => {
+      const batch = writeBatch(firestoreDb);
+      
+      // Menggunakan array lokal untuk menghapus dari database
+      db.attendances.forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id)));
+      db.activities.forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id)));
+      
+      await batch.commit();
       showToast('Semua data aktivitas berhasil direset!', 'success');
     });
   };
@@ -1877,14 +1762,34 @@ function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
 
     showConfirm('PERINGATAN: Tindakan ini akan menimpa seluruh database saat ini dengan data dari file backup. Anda yakin ingin melanjutkan?', () => {
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
         try {
           const restoredData = JSON.parse(evt.target.result);
           
-          // Validasi sederhana untuk memastikan file JSON adalah format database kita
-          if (restoredData.users && restoredData.settings && Array.isArray(restoredData.attendances) && Array.isArray(restoredData.activities)) {
-            updateDb(restoredData);
-            setSets(restoredData.settings); // Update state lokal pengaturan
+          if (restoredData.users && restoredData.settings) {
+            const batch = writeBatch(firestoreDb);
+            
+            // Restore settings
+            batch.set(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'settings', 'config'), restoredData.settings);
+            
+            if (Array.isArray(restoredData.users)) {
+                restoredData.users.forEach(u => batch.set(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', u.id), u));
+            }
+            if (Array.isArray(restoredData.attendances)) {
+                restoredData.attendances.forEach(a => {
+                    const attId = a.id || `${a.studentId}_${a.date}`;
+                    batch.set(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', attId), { ...a, id: attId });
+                });
+            }
+            if (Array.isArray(restoredData.activities)) {
+                restoredData.activities.forEach(a => {
+                    const actId = a.id || `${a.studentId}_${a.date}`;
+                    batch.set(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', actId), { ...a, id: actId });
+                });
+            }
+            
+            await batch.commit();
+            setSets(restoredData.settings);
             showToast('Database berhasil direstore dari file backup!', 'success');
           } else {
             showMessage('Format file JSON tidak valid. Pastikan Anda mengunggah file backup yang benar.');
@@ -1897,7 +1802,6 @@ function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
       reader.readAsText(file);
     });
     
-    // Reset nilai input file
     e.target.value = null;
   };
 
@@ -1967,7 +1871,7 @@ function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
                 <input type="number" value={sets.radius || 50} onChange={e=>setSets({...sets, radius: parseInt(e.target.value)})} className="w-full bg-white rounded-xl p-2.5 border border-slate-200 text-slate-800 focus:ring-2 focus:ring-teal-400 focus:outline-none" />
               </div>
               <div className="md:col-span-3 pt-2">
-                 <button onClick={() => {
+                 <button type="button" onClick={() => {
                    navigator.geolocation.getCurrentPosition(
                      pos => setSets({...sets, centerLat: pos.coords.latitude, centerLng: pos.coords.longitude}), 
                      err => showMessage('Gagal mengambil lokasi Anda. Pastikan izin lokasi aktif.'), 
@@ -1991,7 +1895,7 @@ function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
            ))}
         </div>
         <div className="mt-8 pt-6 border-t border-slate-200 text-right">
-          <button onClick={handleSave} className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-3 rounded-xl font-bold shadow-md shadow-teal-500/20 transition-all">Simpan Pengaturan</button>
+          <button type="button" onClick={handleSave} className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-3 rounded-xl font-bold shadow-md shadow-teal-500/20 transition-all">Simpan Pengaturan</button>
         </div>
       </GlassCard>
 
@@ -1999,14 +1903,14 @@ function AdminSettingsTab({ db, updateDb, dialogHelpers, user }) {
         <h2 className="text-xl font-bold mb-2 text-rose-600">Database & Pemeliharaan</h2>
         <p className="text-sm text-slate-600 font-medium mb-6">Lakukan backup secara berkala. Reset data hanya dilakukan di awal pergantian tahun/periode.</p>
         <div className="flex flex-wrap gap-4">
-          <button onClick={handleBackup} className="bg-white text-sky-600 border border-sky-200 hover:bg-sky-50 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-colors"><Database size={18}/> Backup JSON</button>
+          <button type="button" onClick={handleBackup} className="bg-white text-sky-600 border border-sky-200 hover:bg-sky-50 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-colors"><Database size={18}/> Backup JSON</button>
           
           <label className="bg-white text-amber-600 border border-amber-200 hover:bg-amber-50 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-colors cursor-pointer">
             <UploadCloud size={18}/> Restore JSON
             <input type="file" accept=".json" className="hidden" onChange={handleRestore} />
           </label>
 
-          <button onClick={handleReset} className="bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-colors"><Trash2 size={18}/> Reset Semua Aktivitas</button>
+          <button type="button" onClick={handleReset} className="bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-colors"><Trash2 size={18}/> Reset Semua Aktivitas</button>
         </div>
       </GlassCard>
     </div>
