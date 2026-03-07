@@ -1466,6 +1466,7 @@ function AdminSiswaTab({ db, updateDb, allStudents, dialogHelpers }) {
 function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
   const { showToast } = dialogHelpers;
   const [filterKelas, setFilterKelas] = useState('');
+  const [filterJurusan, setFilterJurusan] = useState('');
   const [filterDate, setFilterDate] = useState('');
   const [searchName, setSearchName] = useState('');
 
@@ -1505,9 +1506,10 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
     return Math.min(100, calculatedAvg + manualBonus);
   };
 
-  // Terapkan filter kelas dan nama
+  // Terapkan filter kelas, jurusan, dan nama
   const processedStudents = allStudents
     .filter(s => filterKelas ? s.kelas === filterKelas : true)
+    .filter(s => filterJurusan ? s.jurusan === filterJurusan : true)
     .filter(s => searchName ? s.name.toLowerCase().includes(searchName.toLowerCase()) : true)
     .map(s => ({ ...s, progress: getFilteredProgress(s.id) }));
 
@@ -1527,7 +1529,7 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
         <body>
           <h2>Laporan Monitoring Rekap Ramadhan ${filterDate ? `(Tanggal: ${filterDate})` : ''}</h2>
           <table>
-            <thead><tr><th>Nama Siswa</th><th>Kelas</th><th>Progress Rata-rata</th><th>Status Target</th></tr></thead>
+            <thead><tr><th>Nama Siswa</th><th>Kelas & Jurusan</th><th>Progress Rata-rata</th><th>Status Target</th></tr></thead>
             <tbody>
               ${processedStudents.map(s => `<tr><td>${s.name}</td><td>${s.kelas} ${s.jurusan}</td><td>${s.progress.toFixed(1)}%</td><td>${s.progress >= db.settings.minPercentage ? 'LULUS' : 'BELUM'}</td></tr>`).join('')}
             </tbody>
@@ -1549,6 +1551,10 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
             <option value="">Semua Kelas</option>
             {KELAS.map(k => <option key={k} value={k}>{k}</option>)}
           </select>
+          <select value={filterJurusan} onChange={e=>setFilterJurusan(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400">
+            <option value="">Semua Jurusan</option>
+            {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
+          </select>
           <div className="flex items-center gap-2">
             <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 [color-scheme:light] dark:[color-scheme:dark]" />
             {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-rose-500 hover:text-rose-700 font-bold">Clear Tanggal</button>}
@@ -1559,13 +1565,14 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
       <div className="overflow-x-auto max-h-[500px]">
         <table className="w-full text-left text-sm">
           <thead className="sticky top-0 bg-white shadow-sm z-10">
-            <tr className="border-b border-slate-200 text-slate-600"><th className="p-3 font-semibold">Siswa</th><th className="p-3 font-semibold">Kelas</th><th className="p-3 text-right font-semibold">Persentase</th><th className="p-3 text-center font-semibold">Status</th></tr>
+            <tr className="border-b border-slate-200 text-slate-600"><th className="p-3 font-semibold">Siswa</th><th className="p-3 font-semibold">Kelas</th><th className="p-3 font-semibold">Jurusan</th><th className="p-3 text-right font-semibold">Persentase</th><th className="p-3 text-center font-semibold">Status</th></tr>
           </thead>
           <tbody>
             {processedStudents.sort((a,b)=>b.progress - a.progress).map(s => (
               <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50 text-slate-800 transition-colors">
                 <td className="p-3 font-bold">{s.name}</td>
                 <td className="p-3 font-medium text-slate-600">{s.kelas}</td>
+                <td className="p-3 font-medium text-slate-600">{s.jurusan}</td>
                 <td className="p-3 text-right font-black text-teal-600">{s.progress.toFixed(1)}%</td>
                 <td className="p-3 text-center">
                   {s.progress >= db.settings.minPercentage ? <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold border border-emerald-200">Lulus Target</span> : <span className="bg-rose-100 text-rose-700 px-3 py-1 rounded-full text-xs font-bold border border-rose-200">Belum Target</span>}
@@ -1573,7 +1580,7 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
               </tr>
             ))}
             {processedStudents.length === 0 && (
-              <tr><td colSpan="4" className="text-center p-6 text-slate-500">Tidak ada data untuk filter yang dipilih.</td></tr>
+              <tr><td colSpan="5" className="text-center p-6 text-slate-500">Tidak ada data untuk filter yang dipilih.</td></tr>
             )}
           </tbody>
         </table>
@@ -1586,6 +1593,7 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
   const { showToast } = dialogHelpers;
   const [filterStudent, setFilterStudent] = useState('');
   const [filterKelas, setFilterKelas] = useState('');
+  const [filterJurusan, setFilterJurusan] = useState('');
   const [filterDate, setFilterDate] = useState('');
 
   const activities = db.activities.filter(a => !a.isDraft).sort((a,b) => new Date(b.date) - new Date(a.date));
@@ -1595,8 +1603,9 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
     if(!student) return false;
     const matchName = student.name.toLowerCase().includes(filterStudent.toLowerCase());
     const matchClass = filterKelas ? student.kelas === filterKelas : true;
+    const matchJurusan = filterJurusan ? student.jurusan === filterJurusan : true;
     const matchDate = filterDate ? act.date === filterDate : true;
-    return matchName && matchClass && matchDate;
+    return matchName && matchClass && matchJurusan && matchDate;
   });
 
   const exportDetailPDF = () => {
@@ -1606,7 +1615,7 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
       <body><h2>Monitoring Detail Catatan Siswa ${filterDate ? `(${filterDate})` : ''}</h2>
       ${filteredActivities.map(act => {
         const s = allStudents.find(x => x.id === act.studentId);
-        return `<div class="card"><div class="meta"><b>${s?.name}</b> (${s?.kelas}) - <span style="color:#0f766e">${act.date}</span></div><p><b>Refleksi:</b> ${act.data.refleksi || '-'}</p><p><b>Bantu Ortu:</b> ${act.data.bantuOrtu.status === 'ya' ? act.data.bantuOrtu.desc : '-'}</p></div>`;
+        return `<div class="card"><div class="meta"><b>${s?.name}</b> (${s?.kelas} ${s?.jurusan}) - <span style="color:#0f766e">${act.date}</span></div><p><b>Refleksi:</b> ${act.data.refleksi || '-'}</p><p><b>Bantu Ortu:</b> ${act.data.bantuOrtu.status === 'ya' ? act.data.bantuOrtu.desc : '-'}</p></div>`;
       }).join('')}
       <script>window.print(); window.close();</script></body></html>
     `);
@@ -1623,6 +1632,10 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
             <option value="">Semua Kelas</option>
             {KELAS.map(k => <option key={k} value={k}>{k}</option>)}
           </select>
+          <select value={filterJurusan} onChange={e=>setFilterJurusan(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400">
+            <option value="">Semua Jurusan</option>
+            {JURUSAN.map(j => <option key={j} value={j}>{j}</option>)}
+          </select>
           <div className="flex items-center gap-2">
             <input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 [color-scheme:light] dark:[color-scheme:dark]" />
             {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-rose-500 hover:text-rose-700 font-bold">Clear</button>}
@@ -1637,7 +1650,7 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
           return (
             <div key={i} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-3">
-                 <span className="font-bold text-slate-800">{s?.name} <span className="text-xs font-semibold text-slate-500 ml-2 bg-slate-100 px-2 py-1 rounded-md">{s?.kelas}</span></span>
+                 <span className="font-bold text-slate-800">{s?.name} <span className="text-xs font-semibold text-slate-500 ml-2 bg-slate-100 px-2 py-1 rounded-md">{s?.kelas} {s?.jurusan}</span></span>
                  <span className="text-xs font-bold text-teal-600 bg-teal-50 px-3 py-1 rounded-full">{act.date}</span>
                </div>
                <div className="text-sm space-y-2 mt-2">
