@@ -67,6 +67,22 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c; 
 };
 
+// Daftar 114 Surah Al-Quran
+const SURAH_LIST = [
+  "Al-Fatihah", "Al-Baqarah", "Ali 'Imran", "An-Nisa'", "Al-Ma'idah", "Al-An'am", "Al-A'raf", "Al-Anfal", "At-Taubah", "Yunus", 
+  "Hud", "Yusuf", "Ar-Ra'd", "Ibrahim", "Al-Hijr", "An-Nahl", "Al-Isra'", "Al-Kahf", "Maryam", "Taha", 
+  "Al-Anbiya'", "Al-Hajj", "Al-Mu'minun", "An-Nur", "Al-Furqan", "Asy-Syu'ara'", "An-Naml", "Al-Qasas", "Al-'Ankabut", "Ar-Rum", 
+  "Luqman", "As-Sajdah", "Al-Ahzab", "Saba'", "Fatir", "Yasin", "As-Saffat", "Sad", "Az-Zumar", "Gafir", 
+  "Fussilat", "Asy-Syura", "Az-Zukhruf", "Ad-Dukhan", "Al-Jasiyah", "Al-Ahqaf", "Muhammad", "Al-Fath", "Al-Hujurat", "Qaf", 
+  "Az-Zariyat", "At-Tur", "An-Najm", "Al-Qamar", "Ar-Rahman", "Al-Waqi'ah", "Al-Hadid", "Al-Mujadilah", "Al-Hasyr", "Al-Mumtahanah", 
+  "As-Saff", "Al-Jumu'ah", "Al-Munafiqun", "At-Tagabun", "At-Talaq", "At-Tahrim", "Al-Mulk", "Al-Qalam", "Al-Haqqah", "Al-Ma'arij", 
+  "Nuh", "Al-Jinn", "Al-Muzzammil", "Al-Muddassir", "Al-Qiyamah", "Al-Insan", "Al-Mursalat", "An-Naba'", "An-Nazi'at", "'Abasa", 
+  "At-Takwir", "Al-Infitar", "Al-Mutaffifin", "Al-Insyiqaq", "Al-Buruj", "At-Tariq", "Al-A'la", "Al-Gasyiyah", "Al-Fajr", "Al-Balad", 
+  "Asy-Syams", "Al-Lail", "Ad-Duha", "Asy-Syarh", "At-Tin", "Al-'Alaq", "Al-Qadr", "Al-Bayyinah", "Az-Zalzalah", "Al-'Adiyat", 
+  "Al-Qari'ah", "At-Takasur", "Al-'Asr", "Al-Humazah", "Al-Fil", "Quraisy", "Al-Ma'un", "Al-Kausar", "Al-Kafirun", "An-Nasr", 
+  "Al-Lahab", "Al-Ikhlas", "Al-Falaq", "An-Nas"
+];
+
 const KEBIASAAN_LIST = [
   { id: 'bangunPagi', label: 'Bangun Pagi' },
   { id: 'beribadah', label: 'Beribadah (Dhuha/Tahajud)' },
@@ -749,10 +765,28 @@ function StudentInputTab({ user, db, updateDb, todayDate, myAttendance, myActivi
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><BookOpen size={18} className="text-teal-500"/> Tadarus Al-Quran 📖</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div><label className="text-sm font-semibold text-slate-600">Mulai Surah</label><input type="text" value={formData.tadarus.startSurah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, startSurah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none" /></div>
-            <div><label className="text-sm font-semibold text-slate-600">Ayat</label><input type="number" value={formData.tadarus.startAyah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, startAyah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none" /></div>
-            <div><label className="text-sm font-semibold text-slate-600">Sampai Surah</label><input type="text" value={formData.tadarus.endSurah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, endSurah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none" /></div>
-            <div><label className="text-sm font-semibold text-slate-600">Ayat</label><input type="number" value={formData.tadarus.endAyah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, endAyah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none" /></div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600">Mulai Surah</label>
+              <select value={formData.tadarus.startSurah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, startSurah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-700">
+                <option value="">Pilih Surah...</option>
+                {SURAH_LIST.map((s, i) => <option key={i} value={s}>{i+1}. {s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600">Ayat</label>
+              <input type="number" value={formData.tadarus.startAyah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, startAyah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-700" />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600">Sampai Surah</label>
+              <select value={formData.tadarus.endSurah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, endSurah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-700">
+                <option value="">Pilih Surah...</option>
+                {SURAH_LIST.map((s, i) => <option key={i} value={s}>{i+1}. {s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600">Ayat</label>
+              <input type="number" value={formData.tadarus.endAyah} onChange={e => setFormData({...formData, tadarus: {...formData.tadarus, endAyah: e.target.value}})} className="w-full bg-white rounded-xl p-2.5 mt-1 border border-slate-200 focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-700" />
+            </div>
           </div>
         </div>
 
