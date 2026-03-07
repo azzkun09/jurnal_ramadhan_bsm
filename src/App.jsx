@@ -30,11 +30,18 @@ const auth = getAuth(app);
 const firestoreDb = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'jurnal-ramadhan-aziz';
 
+// Helper untuk mendapatkan tanggal lokal (menghindari bug zona waktu UTC)
+const getLocalYYYYMMDD = () => {
+  const d = new Date();
+  const z = d.getTimezoneOffset() * 60000;
+  return new Date(d - z).toISOString().split('T')[0];
+};
+
 const INITIAL_SETTINGS = {
   namaSekolah: 'SMK Bina Siswa Mandiri BL. Limbangan',
   tahunPelajaran: '2025/2026',
-  startDate: '2026-02-17',
-  endDate: '2026-03-19',
+  startDate: getLocalYYYYMMDD(), // Diubah agar defaultnya adalah hari ini (Hari ke-1)
+  endDate: '2026-04-07',
   minPercentage: 80,
   minActiveDays: 20,
   weights: { sholat: 40, tarawih: 10, tadarus: 20, puasa: 20, bantuOrtu: 10 },
@@ -43,13 +50,6 @@ const INITIAL_SETTINGS = {
   centerLat: -6.200000,
   centerLng: 106.816666,
   radius: 50
-};
-
-// Helper untuk mendapatkan tanggal lokal (menghindari bug zona waktu UTC)
-const getLocalYYYYMMDD = () => {
-  const d = new Date();
-  const z = d.getTimezoneOffset() * 60000;
-  return new Date(d - z).toISOString().split('T')[0];
 };
 
 // Helper untuk menghitung jarak (Haversine Formula) dalam meter
@@ -415,7 +415,7 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
           </div>
           <h1 className="text-3xl font-bold text-slate-800 mb-1">Jurnal Ramadhan</h1>
           <h2 className="text-sm font-bold text-teal-600 mb-2 uppercase tracking-wide">{db?.settings?.namaSekolah || INITIAL_SETTINGS.namaSekolah}</h2>
-          <p className="text-xs font-bold text-slate-500 mb-3 bg-slate-100 inline-block px-3 py-1 rounded-full">Tahun Pelajaran: {db?.settings?.tahunPelajaran || '2025/2026'}</p>
+          <p className="text-xs font-bold text-slate-500 mb-3 bg-slate-100 inline-block px-3 py-1 rounded-full text-slate-700">Tahun Pelajaran: {db?.settings?.tahunPelajaran || '2025/2026'}</p>
           <p className="text-slate-500 text-sm font-medium">Sistem Pencatatan Kegiatan Ramadhan Siswa</p>
         </div>
         
@@ -458,11 +458,26 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
   const myAttendance = db.attendances.find(a => a.studentId === user.id && a.date === todayDate);
   const myActivity = db.activities.find(a => a.studentId === user.id && a.date === todayDate);
 
-  // Perhitungan Progress
+  // Perhitungan Progress Berdasarkan Hari Berjalan (Elapsed Days)
   const calculateProgress = () => {
     let totalScore = 0;
     let daysCount = 0;
-    const { weights } = db.settings;
+    const { weights, startDate, endDate } = db.settings;
+
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T00:00:00');
+    const todayObj = new Date(todayDate + 'T00:00:00');
+    const totalProgramDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
+
+    // Hitung jumlah hari yang sudah berjalan sejak program dimulai
+    let elapsedDays = 1;
+    if (todayObj < start) {
+       elapsedDays = 1; // Program belum mulai
+    } else if (todayObj > end) {
+       elapsedDays = totalProgramDays; // Program sudah selesai, ambil total maksimal hari
+    } else {
+       elapsedDays = Math.max(1, Math.round((todayObj - start) / (1000 * 60 * 60 * 24)) + 1); // Hari berjalan
+    }
 
     const myActivities = db.activities.filter(a => a.studentId === user.id && !a.isDraft);
     
@@ -492,12 +507,20 @@ function StudentDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleThem
       totalScore += dayScore;
     });
 
-    const calculatedAvg = daysCount > 0 ? totalScore / daysCount : 0;
+    // Rata-rata dibagi HARI YANG SUDAH BERJALAN
+    const calculatedAvg = totalScore / elapsedDays;
+    
+    // Bonus Admin HANYA ditambahkan pada total akhir utama
     const manualBonus = (user.manualProgress !== undefined && user.manualProgress !== null && user.manualProgress !== '') 
       ? Number(user.manualProgress) 
       : 0;
     
-    return { averageProgress: Math.min(100, calculatedAvg + manualBonus), daysCount };
+    return { 
+      averageProgress: Math.min(100, calculatedAvg + manualBonus), 
+      daysCount,
+      totalProgramDays,
+      elapsedDays
+    };
   };
 
   const progressData = calculateProgress();
@@ -861,9 +884,11 @@ function StudentProgressTab({ progressData, activities, user }) {
   // Hitung persentase kebiasaan terpisah & detail ibadah
   let kebiasaanScore = 0;
   let sholatTotal = 0, tarawihTotal = 0, tadarusTotal = 0, puasaTotal = 0, bantuTotal = 0;
-  const totalDays = activities.length;
+  
+  // Menggunakan target HARI YANG TELAH BERJALAN sebagai pembagi untuk mengukur konsistensi
+  const elapsedDays = progressData.elapsedDays;
 
-  if (totalDays > 0) {
+  if (activities.length > 0) {
      let totalChecks = 0;
      activities.forEach(a => {
         // Hitung Kebiasaan
@@ -878,10 +903,11 @@ function StudentProgressTab({ progressData, activities, user }) {
         if (['ya', 'sakit', 'haid'].includes(data.puasa.status)) puasaTotal++;
         if (data.bantuOrtu.status === 'ya') bantuTotal++;
      });
-     kebiasaanScore = (totalChecks / (totalDays * 7)) * 100;
+     kebiasaanScore = (totalChecks / (elapsedDays * 7)) * 100;
   }
 
-  const getPerc = (val) => totalDays > 0 ? (val / totalDays) * 100 : 0;
+  // Persentase rincian juga dibagi dengan hari yang sudah berjalan agar relevan jika bolong
+  const getPerc = (val) => elapsedDays > 0 ? (val / elapsedDays) * 100 : 0;
 
   const details = [
     { label: 'Sholat Wajib', icon: Clock, perc: getPerc(sholatTotal), color: 'bg-sky-500', iconColor: 'text-sky-500' },
@@ -891,27 +917,31 @@ function StudentProgressTab({ progressData, activities, user }) {
     { label: 'Bantu Orang Tua', icon: Heart, perc: getPerc(bantuTotal), color: 'bg-pink-500', iconColor: 'text-pink-500' },
   ];
 
+  const isManual = user.manualProgress !== undefined && user.manualProgress !== null && user.manualProgress !== '' && Number(user.manualProgress) > 0;
+
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <GlassCard className="p-8 flex items-center justify-center flex-col text-center rounded-3xl border-teal-100 relative">
+          {isManual && <span className="absolute top-4 right-4 bg-amber-100 text-amber-700 text-xs font-bold px-3 py-1 rounded-full border border-amber-200">Bonus: +{user.manualProgress}%</span>}
           <h3 className="text-xl font-bold text-slate-800 mb-6">Progress Ibadah Utama</h3>
           <CircularProgress percentage={progressData.averageProgress} size={180} strokeWidth={15} color="text-teal-500" />
           <p className="mt-4 text-slate-500 text-sm font-medium">
-            Rata-rata dari {progressData.daysCount} hari pengisian permanen.
+            Progres rata-rata dari {progressData.elapsedDays} hari yang telah berjalan.<br/>
+            <span className="text-xs opacity-70 mt-1 block">(Total program: {progressData.totalProgramDays} hari | Baru diisi: {progressData.daysCount} hari)</span>
           </p>
         </GlassCard>
         <GlassCard className="p-8 flex items-center justify-center flex-col text-center rounded-3xl border-sky-100">
           <h3 className="text-xl font-bold text-slate-800 mb-6">Progress 7 Kebiasaan</h3>
           <CircularProgress percentage={kebiasaanScore} size={180} strokeWidth={15} color="text-sky-500" />
-          <p className="mt-4 text-slate-500 text-sm font-medium">Persentase pelaksanaan kebiasaan baik.</p>
+          <p className="mt-4 text-slate-500 text-sm font-medium">Progres pelaksanaan kebiasaan keseluruhan sejauh ini.</p>
         </GlassCard>
       </div>
 
       {/* Tambahan Rincian Progress Bar */}
-      {totalDays > 0 && (
+      {activities.length > 0 && (
         <GlassCard className="p-8 rounded-3xl border border-slate-200">
-          <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="text-teal-500"/> Rincian Progress Ibadah Hari Ini</h3>
+          <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2"><Activity className="text-teal-500"/> Rincian Keseluruhan Progress Ibadah</h3>
           <div className="space-y-5">
             {details.map((d, i) => (
               <div key={i}>
@@ -1031,12 +1061,25 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
     }
 
     let totalScore = 0;
-    let daysCount = 0;
-    const { weights } = db.settings;
+    const { weights, startDate, endDate } = db.settings;
+    
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T00:00:00');
+    const todayObj = new Date(todayDate + 'T00:00:00');
+
+    // Hitung jumlah hari yang sudah berjalan sejak program dimulai
+    let elapsedDays = 1;
+    if (todayObj < start) {
+       elapsedDays = 1; 
+    } else if (todayObj > end) {
+       elapsedDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1); 
+    } else {
+       elapsedDays = Math.max(1, Math.round((todayObj - start) / (1000 * 60 * 60 * 24)) + 1);
+    }
+
     const activities = db.activities.filter(a => a.studentId === studentId && !a.isDraft);
     
     activities.forEach(act => {
-      daysCount++;
       const data = act.data;
       let dayScore = 0;
       const sholatCount = Object.values(data.sholat).filter(Boolean).length;
@@ -1048,7 +1091,7 @@ function AdminDashboard({ user, db, updateDb, onLogout, isDarkMode, toggleTheme,
       totalScore += dayScore;
     });
     
-    const calculatedAvg = daysCount > 0 ? totalScore / daysCount : 0;
+    const calculatedAvg = totalScore / elapsedDays;
     return Math.min(100, calculatedAvg + manualBonus);
   };
 
@@ -1556,10 +1599,8 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
     }
 
     let totalScore = 0;
-    let daysCount = 0;
-    const { weights } = db.settings;
+    const { weights, startDate, endDate } = db.settings;
     
-    // Filter aktivitas berdasarkan studentId, bukan draft, dan (jika ada) tanggal yang dipilih
     const activities = db.activities.filter(a => 
       a.studentId === studentId && 
       !a.isDraft &&
@@ -1567,7 +1608,6 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
     );
     
     activities.forEach(act => {
-      daysCount++;
       const data = act.data;
       let dayScore = 0;
       const sholatCount = Object.values(data.sholat).filter(Boolean).length;
@@ -1579,7 +1619,30 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
       totalScore += dayScore;
     });
     
-    const calculatedAvg = daysCount > 0 ? totalScore / daysCount : 0;
+    // Jika tidak di-filter per tanggal, pembaginya adalah HARI YANG SUDAH BERJALAN
+    // Jika difilter per tanggal tertentu, pembaginya adalah 1 (karena kita melihat laporan 1 hari itu)
+    let targetDays = 1;
+    if (!filterDate) {
+        const todayDateStr = getLocalYYYYMMDD();
+        const start = new Date(startDate + 'T00:00:00');
+        const end = new Date(endDate + 'T00:00:00');
+        const todayObj = new Date(todayDateStr + 'T00:00:00');
+        
+        if (todayObj < start) {
+            targetDays = 1;
+        } else if (todayObj > end) {
+            targetDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
+        } else {
+            targetDays = Math.max(1, Math.round((todayObj - start) / (1000 * 60 * 60 * 24)) + 1);
+        }
+    }
+    
+    const calculatedAvg = totalScore / targetDays;
+    
+    // Bonus Admin HANYA ditambahkan pada persentase total program, BUKAN pada pencarian filter tanggal
+    if (filterDate) {
+        return Math.min(100, calculatedAvg);
+    }
     return Math.min(100, calculatedAvg + manualBonus);
   };
 
