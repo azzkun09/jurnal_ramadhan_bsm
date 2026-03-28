@@ -4,7 +4,7 @@ import {
   Settings, Users, ShieldCheck, FileText, Download, LogOut,
   ChevronRight, AlertCircle, Save, CheckSquare, Search,
   Database, UploadCloud, Edit, Trash2, Check, X,
-  Sun, Moon, MapPin, Loader2
+  Sun, Moon, MapPin, Loader2, RotateCcw
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
@@ -284,7 +284,7 @@ export default function App() {
     return () => unsubs.forEach(u => u());
   }, [fbUser]);
 
-  // Session Persistence Effect
+  // Session Persistence Effect (Mencegah "Mental" saat refresh)
   useEffect(() => {
     const savedUserId = localStorage.getItem('ramadhan_session_user');
     if (savedUserId && users.length > 0 && !currentUser) {
@@ -395,7 +395,7 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
             <label className="block text-sm font-semibold text-slate-700 mb-1">Password</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-white/80 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all" placeholder="••••••••" required />
           </div>
-          <button type="submit" className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 text-white font-bold rounded-xl px-4 py-3 shadow-lg shadow-teal-500/30 transform transition hover:-translate-y-0.5">
+          <button type="submit" className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 text-white font-bold rounded-xl px-4 py-3 shadow-lg transform transition hover:-translate-y-0.5">
             Masuk
           </button>
         </form>
@@ -474,6 +474,7 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
 
   return (
     <div className="flex flex-col md:flex-row w-full h-full overflow-hidden">
+      {/* Sidebar Siswa */}
       <div className="w-full md:w-64 bg-white/60 backdrop-blur-md border-b md:border-r border-slate-200/50 flex flex-col shadow-sm shrink-0 z-20">
         <div className="p-4 md:p-6 border-b border-slate-200/50 flex justify-between items-center md:block">
           <div className="flex items-center gap-3">
@@ -518,6 +519,7 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
         </div>
       </div>
 
+      {/* Main Content Siswa */}
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-4xl mx-auto space-y-6">
           {activeTab === 'input' && <StudentInputTab user={user} db={db} todayDate={todayDate} myAttendance={myAttendance} myActivity={myActivity} dialogHelpers={dialogHelpers} />}
@@ -533,6 +535,8 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
     </div>
   );
 }
+
+// --- Komponen Tab Siswa ---
 
 function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialogHelpers }) {
   const { showMessage, showConfirm, showToast } = dialogHelpers;
@@ -1270,6 +1274,25 @@ function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
     });
   };
 
+  const handleResetProgress = async (id) => {
+    showConfirm('Yakin reset progres siswa ini? Semua absensi dan jurnalnya akan dihapus permanen.', async () => {
+      const batch = writeBatch(firestoreDb);
+
+      // Find and delete attendances
+      db.attendances.filter(a => a.studentId === id).forEach(a => {
+        batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id));
+      });
+
+      // Find and delete activities
+      db.activities.filter(a => a.studentId === id).forEach(a => {
+        batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id));
+      });
+
+      await batch.commit();
+      showToast('Progres siswa berhasil direset.', 'success');
+    });
+  };
+
   const processCSVData = async (text) => {
     const lines = text.split('\n').filter(l => l.trim() !== '');
     const batch = writeBatch(firestoreDb);
@@ -1372,8 +1395,9 @@ function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
                   <td className="p-3 text-xs text-slate-500 font-medium">U: {s.username}<br/>P: {s.password}</td>
                   <td className="p-3 font-medium text-slate-600">{s.kelas} - {s.jurusan}</td>
                   <td className="p-3 flex items-center justify-center gap-2">
+                     <button type="button" onClick={() => handleResetProgress(s.id)} className="p-2 bg-amber-100 text-amber-600 hover:bg-amber-200 rounded-lg transition-colors" title="Reset Progress Siswa"><RotateCcw size={16}/></button>
                      <button type="button" onClick={() => {setModalData({...s, manualProgress: s.manualProgress || ''}); setShowModal(true)}} className="p-2 bg-sky-100 text-sky-600 hover:bg-sky-200 rounded-lg transition-colors" title="Edit Data & Sertifikat"><Edit size={16}/></button>
-                     <button type="button" onClick={() => handleDelete(s.id)} className="p-2 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                     <button type="button" onClick={() => handleDelete(s.id)} className="p-2 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-lg transition-colors" title="Hapus Siswa"><Trash2 size={16}/></button>
                   </td>
                 </tr>
               ))}
@@ -1738,6 +1762,7 @@ function AdminSettingsTab({ db, user, dialogHelpers }) {
     showPrompt('PERINGATAN! Ini akan menghapus SEMUA data Absensi dan Aktivitas Siswa. Ketik "RESET" untuk melanjutkan:', 'RESET', async () => {
       const batch = writeBatch(firestoreDb);
       
+      // Menggunakan array lokal untuk menghapus dari database
       db.attendances.forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id)));
       db.activities.forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id)));
       
