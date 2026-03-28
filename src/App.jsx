@@ -190,7 +190,7 @@ function ToastContainer({ toasts, removeToast }) {
             {t.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
             <span className="font-bold text-sm tracking-wide">{t.message}</span>
           </div>
-          <button onClick={() => removeToast(t.id)} className="ml-4 opacity-70 hover:opacity-100"><X size={18}/></button>
+          <button type="button" onClick={() => removeToast(t.id)} className="ml-4 opacity-70 hover:opacity-100"><X size={18}/></button>
         </div>
       ))}
     </div>
@@ -263,16 +263,18 @@ export default function App() {
         if (s.exists()) {
             setSettings(s.data());
         } else {
-            setDoc(paths.settings, DEFAULT_SETTINGS).catch(err => console.error("Init Settings Error:", err));
+            // PERBAIKAN: Hanya Set fallback di memory lokal agar HP siswa tidak mereset database ke default secara tak sengaja
+            setSettings(DEFAULT_SETTINGS);
         }
       }),
       onSnapshot(paths.users, (s) => {
         const uList = s.docs.map(d => ({ id: d.id, ...d.data() }));
         if (uList.length === 0) {
-           const adminRef = doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', 'admin');
-           setDoc(adminRef, { id: 'admin', role: 'admin', username: 'admin', password: '123', name: 'Administrator' });
+           // PERBAIKAN: Berikan admin default ke memory lokal tanpa memaksa write ke server jika db belum siap
+           setUsers([{ id: 'admin', role: 'admin', username: 'admin', password: '123', name: 'Administrator' }]);
+        } else {
+           setUsers(uList);
         }
-        setUsers(uList);
       }),
       onSnapshot(paths.attendances, (s) => setAttendances(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(paths.activities, (s) => setActivities(s.docs.map(d => ({ id: d.id, ...d.data() }))))
@@ -282,7 +284,7 @@ export default function App() {
     return () => unsubs.forEach(u => u());
   }, [fbUser]);
 
-  // Session Persistence Effect (Mencegah "Mental" saat refresh)
+  // Session Persistence Effect
   useEffect(() => {
     const savedUserId = localStorage.getItem('ramadhan_session_user');
     if (savedUserId && users.length > 0 && !currentUser) {
@@ -393,7 +395,7 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
             <label className="block text-sm font-semibold text-slate-700 mb-1">Password</label>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-white/80 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 transition-all" placeholder="••••••••" required />
           </div>
-          <button type="submit" className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 text-white font-bold rounded-xl px-4 py-3 shadow-lg transform transition hover:-translate-y-0.5">
+          <button type="submit" className="w-full bg-gradient-to-r from-teal-400 to-sky-500 hover:from-teal-500 hover:to-sky-600 text-white font-bold rounded-xl px-4 py-3 shadow-lg shadow-teal-500/30 transform transition hover:-translate-y-0.5">
             Masuk
           </button>
         </form>
@@ -442,7 +444,6 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
     
     myActivities.forEach(act => {
       daysCount++;
-      // PROTEKSI CRASH: Menggunakan fallback object (|| {}) agar tidak error saat baca data lama
       const data = act.data || {};
       let dayScore = 0;
       
@@ -473,7 +474,6 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
 
   return (
     <div className="flex flex-col md:flex-row w-full h-full overflow-hidden">
-      {/* Sidebar Siswa */}
       <div className="w-full md:w-64 bg-white/60 backdrop-blur-md border-b md:border-r border-slate-200/50 flex flex-col shadow-sm shrink-0 z-20">
         <div className="p-4 md:p-6 border-b border-slate-200/50 flex justify-between items-center md:block">
           <div className="flex items-center gap-3">
@@ -518,7 +518,6 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
         </div>
       </div>
 
-      {/* Main Content Siswa */}
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-4xl mx-auto space-y-6">
           {activeTab === 'input' && <StudentInputTab user={user} db={db} todayDate={todayDate} myAttendance={myAttendance} myActivity={myActivity} dialogHelpers={dialogHelpers} />}
@@ -534,8 +533,6 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
     </div>
   );
 }
-
-// --- Komponen Tab Siswa ---
 
 function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialogHelpers }) {
   const { showMessage, showConfirm, showToast } = dialogHelpers;
@@ -698,7 +695,6 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
 
       <div className={`space-y-8 ${isFormLocked ? 'opacity-70 pointer-events-none' : ''}`}>
         
-        {/* Sholat & Tarawih */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
             <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Clock size={18} className="text-sky-500"/> Sholat Wajib 🕌</h3>
@@ -720,7 +716,6 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           </div>
         </div>
 
-        {/* Tadarus */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><BookOpen size={18} className="text-teal-500"/> Tadarus Al-Quran 📖</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -749,7 +744,6 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           </div>
         </div>
 
-        {/* Puasa */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4">Puasa Hari Ini? 🍽️</h3>
           <div className="flex gap-6 mb-4">
@@ -768,7 +762,6 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           )}
         </div>
 
-        {/* Bantu Orang Tua */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Heart size={18} className="text-pink-500"/> Membantu Orang Tua 💖</h3>
           <div className="flex gap-6 mb-4">
@@ -780,7 +773,6 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           )}
         </div>
 
-        {/* 7 Kebiasaan */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4">7 Kebiasaan Anak Indonesia Hebat 🌟</h3>
           <div className="space-y-4">
@@ -798,7 +790,6 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
           </div>
         </div>
 
-        {/* Refleksi */}
         <div className="bg-white/60 p-5 rounded-2xl border border-teal-100 shadow-sm">
            <h3 className="font-bold text-slate-800 mb-4">Apa yang Anda dapatkan hari ini? 💭</h3>
            <textarea value={formData.refleksi} onChange={e => setFormData({...formData, refleksi: e.target.value})} className="w-full bg-white rounded-xl p-4 border border-slate-200 min-h-[120px] focus:ring-2 focus:ring-teal-400 focus:outline-none text-slate-800 placeholder-slate-400" placeholder="Tuliskan pelajaran, hikmah, atau perasaan Anda hari ini..." />
@@ -816,7 +807,7 @@ function StudentInputTab({ user, db, todayDate, myAttendance, myActivity, dialog
   );
 }
 
-function StudentProgressTab({ progressData, activities, user }) {
+function StudentProgressTab({ progressData, activities }) {
   let kebiasaanScore = 0;
   let sholatTotal = 0, tarawihTotal = 0, tadarusTotal = 0, puasaTotal = 0, bantuTotal = 0;
   
@@ -825,7 +816,6 @@ function StudentProgressTab({ progressData, activities, user }) {
   if (activities.length > 0) {
      let totalChecks = 0;
      activities.forEach(a => {
-        // PERLINDUNGAN CRASH: Gunakan fallback || {} 
         const data = a.data || {};
         Object.values(data.kebiasaan || {}).forEach(k => { if(k?.checked) totalChecks++ });
         
@@ -1003,7 +993,6 @@ function AdminDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogHel
     const activities = db.activities.filter(a => a.studentId === studentId && !a.isDraft);
     
     activities.forEach(act => {
-      // PROTEKSI CRASH UNTUK ADMIN
       const data = act.data || {};
       let dayScore = 0;
       const sholatCount = Object.values(data.sholat || {}).filter(Boolean).length;
@@ -1379,9 +1368,6 @@ function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
                 <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50 text-slate-800 transition-colors">
                   <td className="p-3 font-bold">
                     {s.name}
-                    {(s.manualProgress !== undefined && s.manualProgress !== null && s.manualProgress !== '' && Number(s.manualProgress) > 0) && (
-                      <span className="ml-2 bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded-full font-bold">Bonus: +{s.manualProgress}%</span>
-                    )}
                   </td>
                   <td className="p-3 text-xs text-slate-500 font-medium">U: {s.username}<br/>P: {s.password}</td>
                   <td className="p-3 font-medium text-slate-600">{s.kelas} - {s.jurusan}</td>
@@ -1506,7 +1492,6 @@ function AdminMonitoringTab({ db, allStudents, dialogHelpers }) {
     );
     
     activities.forEach(act => {
-      // PROTEKSI CRASH: gunakan ?. dan || {}
       const data = act.data || {};
       let dayScore = 0;
       const sholatCount = Object.values(data.sholat || {}).filter(Boolean).length;
@@ -1705,8 +1690,16 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
 
 function AdminSettingsTab({ db, user, dialogHelpers }) {
   const { showMessage, showPrompt, showToast, showConfirm } = dialogHelpers;
+  // STATE SYNC: Memastikan state lokal Form selalu ter-update dengan data terbaru dari database
   const [sets, setSets] = useState(db.settings);
+  useEffect(() => {
+    setSets(db.settings);
+  }, [db.settings]);
+
   const [adminCreds, setAdminCreds] = useState({ username: user.username, password: user.password });
+  useEffect(() => {
+    setAdminCreds({ username: user.username, password: user.password });
+  }, [user]);
 
   const handleSave = async () => {
     const batch = writeBatch(firestoreDb);
@@ -1745,7 +1738,6 @@ function AdminSettingsTab({ db, user, dialogHelpers }) {
     showPrompt('PERINGATAN! Ini akan menghapus SEMUA data Absensi dan Aktivitas Siswa. Ketik "RESET" untuk melanjutkan:', 'RESET', async () => {
       const batch = writeBatch(firestoreDb);
       
-      // Menggunakan array lokal untuk menghapus dari database
       db.attendances.forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id)));
       db.activities.forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id)));
       
@@ -1798,7 +1790,7 @@ function AdminSettingsTab({ db, user, dialogHelpers }) {
             }
             
             await batch.commit();
-            setSets(restoredData.settings);
+            // setSets is updated automatically via useEffect
             showToast('Database berhasil direstore dari file backup!', 'success');
           } else {
             showMessage('Format file JSON tidak valid. Pastikan Anda mengunggah file backup yang benar.');
