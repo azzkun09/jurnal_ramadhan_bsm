@@ -263,14 +263,12 @@ export default function App() {
         if (s.exists()) {
             setSettings(s.data());
         } else {
-            // PERBAIKAN: Hanya Set fallback di memory lokal agar HP siswa tidak mereset database ke default secara tak sengaja
             setSettings(DEFAULT_SETTINGS);
         }
       }),
       onSnapshot(paths.users, (s) => {
         const uList = s.docs.map(d => ({ id: d.id, ...d.data() }));
         if (uList.length === 0) {
-           // PERBAIKAN: Berikan admin default ke memory lokal tanpa memaksa write ke server jika db belum siap
            setUsers([{ id: 'admin', role: 'admin', username: 'admin', password: '123', name: 'Administrator' }]);
         } else {
            setUsers(uList);
@@ -284,7 +282,7 @@ export default function App() {
     return () => unsubs.forEach(u => u());
   }, [fbUser]);
 
-  // Session Persistence Effect (Mencegah "Mental" saat refresh)
+  // Session Persistence Effect
   useEffect(() => {
     const savedUserId = localStorage.getItem('ramadhan_session_user');
     if (savedUserId && users.length > 0 && !currentUser) {
@@ -405,7 +403,7 @@ function LoginScreen({ onLogin, db, isDarkMode, toggleTheme, dialogHelpers }) {
         {isDarkMode ? <Sun size={24} /> : <Moon size={24} />}
       </button>
       <div className="absolute bottom-6 text-center w-full text-xs font-medium text-slate-500 z-10">
-        &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
+        © {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
       </div>
     </div>
   );
@@ -528,7 +526,7 @@ function StudentDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogH
           {activeTab === 'sertifikat' && <StudentCertificateTab user={user} settings={db.settings} progressData={progressData} />}
 
           <div className="text-center text-xs font-medium text-slate-400 pt-8 pb-4">
-            &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
+            © {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
           </div>
         </div>
       </div>
@@ -915,11 +913,14 @@ function StudentHistoryTab({ activities }) {
 
 function StudentCertificateTab({ user, settings, progressData }) {
   const today = new Date();
-  const endDate = new Date(settings.endDate);
+  today.setHours(0, 0, 0, 0); // Reset jam agar perbandingan tanggal lebih akurat
+  const endDate = new Date(settings.endDate + 'T00:00:00');
   const isPeriodEnded = today > endDate;
+  
   const meetsTarget = progressData.averageProgress >= settings.minPercentage && progressData.daysCount >= settings.minActiveDays;
   
-  const canDownload = isPeriodEnded && (meetsTarget || user.ignoreTarget);
+  // Fitur Bypass (Mengabaikan tanggal dan target jika Admin mengizinkan)
+  const hasAdminBypass = user.allowDownload || user.ignoreTarget;
 
   return (
     <GlassCard className="p-10 text-center rounded-3xl border-white animate-fade-in-up">
@@ -928,33 +929,40 @@ function StudentCertificateTab({ user, settings, progressData }) {
          <h2 className="text-3xl font-bold text-slate-800 mb-2">Sertifikat Kelulusan</h2>
          <p className="text-slate-500 font-medium">Program Kegiatan Ramadhan</p>
          
-         <div className="bg-white/80 rounded-2xl p-6 my-8 border border-teal-100 shadow-sm">
+         <div className="bg-white/80 rounded-2xl p-6 my-8 border border-teal-100 shadow-sm relative">
+           {hasAdminBypass && (
+             <span className="absolute -top-3 -right-3 bg-amber-400 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md">
+               Akses Khusus Admin
+             </span>
+           )}
            <CircularProgress percentage={progressData.averageProgress} size={140} color="text-teal-500" label="Pencapaian Akhir" />
            <div className="mt-4 font-semibold text-slate-600">
              Hari aktif: {progressData.daysCount} / Syarat: {settings.minActiveDays} hari
            </div>
          </div>
 
-         {!isPeriodEnded ? (
+         {hasAdminBypass || isPeriodEnded ? (
+           (meetsTarget || hasAdminBypass) ? (
+             <div>
+               {user.certLink ? (
+                 <a href={user.certLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-gradient-to-r from-teal-400 to-sky-500 text-white font-bold px-8 py-4 rounded-full shadow-lg hover:scale-105 transition-transform">
+                   <Download size={24}/> Download Sertifikat
+                 </a>
+               ) : (
+                 <div className="bg-teal-50 text-teal-800 border border-teal-200 p-4 rounded-xl text-sm font-medium">
+                   {hasAdminBypass ? 'Akses download telah dibuka oleh Admin, namun link sertifikat belum diunggah.' : 'Anda memenuhi kriteria! Menunggu admin mengunggah link sertifikat Anda.'}
+                 </div>
+               )}
+             </div>
+           ) : (
+             <div className="bg-rose-50 text-rose-800 border border-rose-200 p-4 rounded-xl font-medium">
+               <h4 className="font-bold mb-1">Tetap Semangat!</h4>
+               <p className="text-sm">Anda belum mencapai target minimal kelulusan ({settings.minPercentage}% dan {settings.minActiveDays} hari).</p>
+             </div>
+           )
+         ) : (
            <div className="bg-sky-50 text-sky-800 border border-sky-200 p-4 rounded-xl text-sm font-medium">
              Periode Ramadhan belum selesai. Sertifikat akan tersedia setelah tanggal {new Date(settings.endDate).toLocaleDateString('id-ID')}. Terus semangat beribadah!
-           </div>
-         ) : canDownload ? (
-           <div>
-             {user.certLink || user.allowDownload ? (
-               <a href={user.certLink || '#'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-gradient-to-r from-teal-400 to-sky-500 text-white font-bold px-8 py-4 rounded-full shadow-lg hover:scale-105 transition-transform">
-                 <Download size={24}/> Download Sertifikat
-               </a>
-             ) : (
-               <div className="bg-teal-50 text-teal-800 border border-teal-200 p-4 rounded-xl text-sm font-medium">
-                 Anda memenuhi kriteria! Menunggu admin mengunggah link sertifikat Anda.
-               </div>
-             )}
-           </div>
-         ) : (
-           <div className="bg-rose-50 text-rose-800 border border-rose-200 p-4 rounded-xl font-medium">
-             <h4 className="font-bold mb-1">Tetap Semangat!</h4>
-             <p className="text-sm">Anda belum mencapai target minimal kelulusan ({settings.minPercentage}% dan {settings.minActiveDays} hari).</p>
            </div>
          )}
       </div>
@@ -1121,7 +1129,7 @@ function AdminDashboard({ user, db, onLogout, isDarkMode, toggleTheme, dialogHel
           {activeTab === 'pengaturan' && <AdminSettingsTab db={db} user={user} dialogHelpers={dialogHelpers} />}
 
           <div className="text-center text-xs font-medium text-slate-400 pt-8 pb-4">
-            &copy; {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
+            © {new Date().getFullYear()} {db.settings.namaSekolah}. All rights reserved.
           </div>
         </div>
       </div>
@@ -1265,7 +1273,6 @@ function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
       const batch = writeBatch(firestoreDb);
       batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'users', id));
       
-      // Delete their attendances and activities
       db.attendances.filter(a => a.studentId === id).forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id)));
       db.activities.filter(a => a.studentId === id).forEach(a => batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id)));
       
@@ -1278,12 +1285,10 @@ function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
     showConfirm('Yakin reset progres siswa ini? Semua absensi dan jurnalnya akan dihapus permanen.', async () => {
       const batch = writeBatch(firestoreDb);
 
-      // Find and delete attendances
       db.attendances.filter(a => a.studentId === id).forEach(a => {
         batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'attendances', a.id));
       });
 
-      // Find and delete activities
       db.activities.filter(a => a.studentId === id).forEach(a => {
         batch.delete(doc(firestoreDb, 'artifacts', appId, 'public', 'data', 'activities', a.id));
       });
@@ -1474,7 +1479,7 @@ function AdminSiswaTab({ db, allStudents, dialogHelpers }) {
                   <h4 className="font-bold text-sm text-sky-800">Pengaturan Sertifikat (Opsional)</h4>
                   <div><label className="text-xs font-semibold text-sky-700 mb-1 block">Link URL Sertifikat</label><input type="url" value={modalData.certLink||''} onChange={e=>setModalData({...modalData, certLink: e.target.value})} className="w-full bg-white rounded-xl p-3 border border-sky-200 text-sm focus:ring-2 focus:ring-sky-400 focus:outline-none text-slate-800 transition-colors" placeholder="https://drive.google.com/..." /></div>
                   <div className="space-y-3 pt-2">
-                    <label className="flex items-start gap-3 text-sm text-sky-900 font-medium cursor-pointer"><input type="checkbox" checked={modalData.allowDownload||false} onChange={e=>setModalData({...modalData, allowDownload: e.target.checked})} className="mt-1 w-4 h-4 rounded text-sky-500 border-sky-300 focus:ring-sky-500" /> <span className="leading-snug">Izin Download Langsung</span></label>
+                    <label className="flex items-start gap-3 text-sm text-sky-900 font-medium cursor-pointer"><input type="checkbox" checked={modalData.allowDownload||false} onChange={e=>setModalData({...modalData, allowDownload: e.target.checked})} className="mt-1 w-4 h-4 rounded text-sky-500 border-sky-300 focus:ring-sky-500" /> <span className="leading-snug">Izin Download Langsung (Tanpa Menunggu Tanggal Selesai)</span></label>
                     <label className="flex items-start gap-3 text-sm text-sky-900 font-medium cursor-pointer"><input type="checkbox" checked={modalData.ignoreTarget||false} onChange={e=>setModalData({...modalData, ignoreTarget: e.target.checked})} className="mt-1 w-4 h-4 rounded text-sky-500 border-sky-300 focus:ring-sky-500" /> <span className="leading-snug">Abaikan Target / Lulus Otomatis</span></label>
                   </div>
                 </div>
@@ -1714,7 +1719,6 @@ function AdminMonitoringDetailTab({ db, allStudents, dialogHelpers }) {
 
 function AdminSettingsTab({ db, user, dialogHelpers }) {
   const { showMessage, showPrompt, showToast, showConfirm } = dialogHelpers;
-  // STATE SYNC: Memastikan state lokal Form selalu ter-update dengan data terbaru dari database
   const [sets, setSets] = useState(db.settings);
   useEffect(() => {
     setSets(db.settings);
